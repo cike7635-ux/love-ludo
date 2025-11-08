@@ -16,6 +16,12 @@ export default async function Home() {
 
   return (
     <main className="min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden">
+      {/* 顶部提示小字 */}
+      <div className="absolute top-3 left-0 right-0 flex justify-center">
+        <p className="text-xs text-white/60">
+          将网站添加到主屏幕可以获得近似app的体验哦~
+        </p>
+      </div>
       {/* 背景装饰 - 更柔和 */}
       <div className="absolute inset-0 -z-10 pointer-events-none">
         <div className="absolute left-1/2 top-1/3 -translate-x-1/2 -translate-y-1/2 h-96 w-96 rounded-full blur-[100px] opacity-20 bg-gradient-to-br from-[#FF6B9D] to-[#8B5A8E]" />

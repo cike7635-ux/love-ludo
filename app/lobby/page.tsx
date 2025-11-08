@@ -13,6 +13,10 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
       {/* 首次进入首页时的偏好设置弹窗（仅登录用户，且偏好未完善时提示） */}
       <PreferencesModal />
       <div className="max-w-md mx-auto min-h-svh flex flex-col p-6 pb-24">
+        {/* 顶部提示小字 */}
+        <p className="text-xs text-white/60 text-center mb-2">
+          将网站添加到主屏幕可以获得近似app的体验哦~
+        </p>
         <div className="flex items-center justify-between mb-6 pt-4">
           <div>
             <h2 className="text-2xl font-bold">首页</h2>
