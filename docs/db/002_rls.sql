@@ -8,6 +8,7 @@ ALTER TABLE tasks ENABLE ROW LEVEL SECURITY;
 ALTER TABLE rooms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_sessions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE game_moves ENABLE ROW LEVEL SECURITY;
+ALTER TABLE game_history ENABLE ROW LEVEL SECURITY;
 
 -- profiles: any authenticated can read; only owner can insert/update
 CREATE POLICY profiles_select_authenticated ON profiles
