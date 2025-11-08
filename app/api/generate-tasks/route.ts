@@ -18,6 +18,22 @@ interface ApiPayload {
   customRequirement?: string;
 }
 
+type ParseResult =
+  | {
+      ok: true;
+      data: {
+        title: string;
+        description: string;
+        customRequirement: string;
+        gender: string;
+        kinks: string[];
+      };
+    }
+  | {
+      ok: false;
+      error: { message: string; status: number };
+    };
+
 interface Task {
   description: string;
 }
@@ -35,16 +51,16 @@ export async function POST(req: NextRequest) {
 
   try {
     // 1. 解析和验证请求体
-    const { validationError, ...payload } = await parseAndValidateRequest(req);
-    if (validationError) {
+    const result = await parseAndValidateRequest(req);
+    if (!result.ok) {
       return NextResponse.json(
-        { error: validationError.message },
-        { status: validationError.status }
+        { error: result.error.message },
+        { status: result.error.status }
       );
     }
 
     // 2. 构建 Prompt
-    const { sysPrompt, userPrompt } = buildPrompts(payload);
+    const { sysPrompt, userPrompt } = buildPrompts(result.data);
 
     // 3. 调用 AI
     const aiContent = await callOpenRouter(sysPrompt, userPrompt);
@@ -77,21 +93,17 @@ export async function POST(req: NextRequest) {
 /**
  * 解析并验证 NextRequest 的 JSON body
  */
-async function parseAndValidateRequest(req: NextRequest) {
+async function parseAndValidateRequest(req: NextRequest): Promise<ParseResult> {
   let payload: ApiPayload;
   try {
     payload = await req.json();
   } catch {
-    return {
-      validationError: { message: "请求体必须为 JSON", status: 400 },
-    };
+    return { ok: false, error: { message: "请求体必须为 JSON", status: 400 } };
   }
 
   const title = String(payload?.title ?? "").trim();
   if (!title) {
-    return {
-      validationError: { message: "缺少主题标题", status: 400 },
-    };
+    return { ok: false, error: { message: "缺少主题标题", status: 400 } };
   }
 
   const description = String(payload?.description ?? "").trim();
@@ -102,7 +114,10 @@ async function parseAndValidateRequest(req: NextRequest) {
     ? payload.preferences.kinks.filter(k => typeof k === 'string' && k.trim() !== '')
     : [];
 
-  return { title, description, customRequirement, gender, kinks };
+  return {
+    ok: true,
+    data: { title, description, customRequirement, gender, kinks },
+  };
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist } from "next/font/google";
+import { GeistSans } from "geist/font/sans";
 import { ThemeProvider } from "next-themes";
 import "./globals.css";
 import { BottomNav } from "@/components/ui/bottom-nav";
@@ -14,11 +14,6 @@ export const metadata: Metadata = {
   description: "情侣互动游戏：双主题任务、实时对战、AI任务生成",
 };
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  display: "swap",
-  subsets: ["latin"],
-});
 
 export default function RootLayout({
   children,
@@ -27,7 +22,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN" suppressHydrationWarning>
-      <body className={`${geistSans.className} antialiased bg-background text-foreground`}>
+      <body className={`${GeistSans.className} antialiased bg-background text-foreground`}>
   <ThemeProvider
     attribute="class"
     defaultTheme="system"
