@@ -1,11 +1,10 @@
-// /app/api/admin/keys/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { cookies } from 'next/headers';
 
 // 生成随机密钥的函数
 function generateKeyCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 去掉了容易混淆的字符
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let result = 'CPFLY-';
   for (let i = 0; i < 6; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -13,36 +12,59 @@ function generateKeyCode() {
   return result;
 }
 
-// GET：获取所有密钥
+// GET请求：获取所有密钥
 export async function GET(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies });
-  const { data, error } = await supabase
-    .from('access_keys')
-    .select('*')
-    .order('created_at', { ascending: false });
+  try {
+    const supabase = createRouteHandlerClient({ cookies });
+    const { data, error } = await supabase
+      .from('access_keys')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+    if (error) {
+      console.error('获取密钥列表失败:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('服务器错误:', error);
+    return NextResponse.json({ error: '服务器内部错误' }, { status: 500 });
+  }
 }
 
-// POST：创建新密钥
+// POST请求：创建新密钥
 export async function POST(request: NextRequest) {
-  const supabase = createRouteHandlerClient({ cookies });
-  const body = await request.json();
+  try {
+    const supabase = createRouteHandlerClient({ cookies });
+    const body = await request.json();
 
-  const keyCode = generateKeyCode();
+    // 生成密钥
+    const keyCode = generateKeyCode();
 
-  const { data, error } = await supabase
-    .from('access_keys')
-    .insert({
-      key_code: keyCode,
-      description: body.description,
-      max_uses: body.maxUses,
-      account_valid_for_days: body.validDays,
-    })
-    .select()
-    .single();
+    // 插入数据库
+    const { data, error } = await supabase
+      .from('access_keys')
+      .insert({
+        key_code: keyCode,
+        description: body.description,
+        max_uses: body.maxUses || 1,
+        used_count: 0,
+        account_valid_for_days: body.validDays || 30,
+        is_active: true,
+        created_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json(data);
+    if (error) {
+      console.error('创建密钥失败:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json(data);
+  } catch (error: any) {
+    console.error('服务器错误:', error);
+    return NextResponse.json({ error: '服务器内部错误' }, { status: 500 });
+  }
 }
