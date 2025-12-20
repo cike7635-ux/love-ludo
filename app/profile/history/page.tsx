@@ -1,5 +1,49 @@
-import { createClient } from "@/lib/supabase/server";
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import Link from "next/link";
+
+// 辅助函数：从JWT中解析创建时间（安全版本）
+function getJwtCreationTime(jwt: string): Date | null {
+  try {
+    // JWT格式: header.payload.signature
+    const payloadBase64 = jwt.split('.')[1];
+    if (!payloadBase64) return null;
+    
+    // Base64解码（兼容Node.js和浏览器环境）
+    let payloadJson: string;
+    
+    // 处理可能的Base64 URL编码
+    const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = base64.length % 4;
+    const paddedBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
+    
+    // 在Node.js环境中使用Buffer，在浏览器中使用atob
+    if (typeof Buffer !== 'undefined') {
+      payloadJson = Buffer.from(paddedBase64, 'base64').toString();
+    } else {
+      // 浏览器环境
+      payloadJson = decodeURIComponent(
+        atob(paddedBase64)
+          .split('')
+          .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+          .join('')
+      );
+    }
+    
+    const payload = JSON.parse(payloadJson);
+    
+    // iat是签发时间（秒），需要转换为毫秒
+    if (payload.iat) {
+      return new Date(payload.iat * 1000);
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('解析JWT失败:', error);
+    return null;
+  }
+}
 
 type GameHistoryRecord = {
   id: string;
@@ -13,19 +57,95 @@ type GameHistoryRecord = {
 };
 
 export default async function GameHistoryPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return (
-      <div className="max-w-md mx-auto min-h-svh flex items-center justify-center px-6">
-        <p className="text-gray-400">请先登录</p>
-      </div>
-    );
+  // 1. 创建Supabase客户端（使用createServerClient）
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { 
+      cookies: { 
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch (error) {
+            console.error('设置cookie失败:', error);
+          }
+        }
+      }
+    }
+  );
+  
+  // 2. 检查用户登录状态
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    redirect('/login');
   }
-
+  
+  // 3. 获取当前会话
+  const { data: { session: currentSession } } = await supabase.auth.getSession();
+  if (!currentSession) {
+    await supabase.auth.signOut();
+    redirect('/login?error=no_session');
+  }
+  
+  // 4. 获取用户资料（包括会话信息和有效期）
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('account_expires_at, last_login_at, last_login_session, nickname, email')
+    .eq('id', user.id)
+    .single();
+  
+  if (!profile) {
+    redirect('/login?error=profile_not_found');
+  }
+  
+  // 5. 检查会员有效期
+  const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
+  if (isExpired) {
+    redirect('/account-expired');
+  }
+  
+  // ============ 【严格的多设备登录验证】 ============
+  // 从JWT中解析会话创建时间
+  const sessionCreatedTime = getJwtCreationTime(currentSession.access_token);
+  const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+  
+  // 添加3秒容差，避免由于时间同步或处理延迟导致的误判
+  const tolerance = 3000; // 3秒
+  
+  if (lastLoginTime && sessionCreatedTime) {
+    // 计算时间差（毫秒）
+    const timeDiff = lastLoginTime.getTime() - sessionCreatedTime.getTime();
+    
+    // 如果最后登录时间比会话创建时间晚（超过容差），说明有新登录
+    if (timeDiff > tolerance) {
+      console.log(`[游戏记录页面] 检测到新登录，强制退出用户: ${user.email}`);
+      console.log(`  - JWT会话创建时间: ${sessionCreatedTime.toISOString()}`);
+      console.log(`  - 最后登录时间: ${lastLoginTime.toISOString()}`);
+      console.log(`  - 时间差: ${timeDiff}ms`);
+      
+      // 强制退出当前会话
+      await supabase.auth.signOut();
+      
+      // 重定向到专门的过期提示页面
+      const userEmail = user.email || '';
+      const lastLoginTimeStr = lastLoginTime.toISOString();
+      
+      redirect(`/login/expired?email=${encodeURIComponent(userEmail)}&last_login_time=${encodeURIComponent(lastLoginTimeStr)}`);
+    }
+  }
+  
+  // 6. 可选的：记录当前登录到日志（用于调试）
+  console.log(`[游戏记录页面] 用户 ${user.email} 会话验证通过`);
+  console.log(`  - JWT会话创建时间: ${sessionCreatedTime ? sessionCreatedTime.toISOString() : '无法解析'}`);
+  console.log(`  - 最后登录时间: ${lastLoginTime ? lastLoginTime.toISOString() : '无记录'}`);
+  console.log(`  - 会话标识: ${profile.last_login_session || '无标识'}`);
+  // ============ 会话验证结束 ============
+  
+  // 7. 原有的业务逻辑 - 获取游戏记录数据
   const { data: history } = await supabase
     .from("game_history")
     .select("*")
@@ -54,7 +174,18 @@ export default async function GameHistoryPage() {
         </div>
       </div>
 
-      <div className="px-6 mt-6 space-y-3">
+      {/* 会员状态提示 */}
+      <div className="px-6 mt-4">
+        <div className="glass rounded-xl p-3 mb-4">
+          <p className="text-sm text-green-400 text-center">
+            会员有效期至：{profile?.account_expires_at ? 
+              new Date(profile.account_expires_at).toLocaleDateString('zh-CN') : 
+              '未设置'}
+          </p>
+        </div>
+      </div>
+
+      <div className="px-6 mt-2 space-y-3">
         {records.length === 0 ? (
           <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-8 text-center">
             <p className="text-gray-400">暂无游戏记录</p>
