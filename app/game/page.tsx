@@ -1,13 +1,41 @@
+// /app/game/page.tsx
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import GameView from "@/components/game-view";
-import { createClient } from "@/lib/supabase/server";
 import { getActiveSession } from "./actions";
 
 export default async function GamePage() {
-  const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
-  const userId = userData?.user?.id ?? null;
+  // 1. 创建Supabase客户端并验证会员
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
+  );
+  
+  // 2. 检查用户登录状态
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    redirect('/login');
+  }
+  
+  // 3. 检查会员有效期
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('account_expires_at')
+    .eq('id', user.id)
+    .single();
+  
+  const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
+  if (isExpired) {
+    redirect('/account-expired');
+  }
+  
+  // 4. 原有的业务逻辑
+  const userId = user.id;
   const { session } = await getActiveSession();
 
   return (
