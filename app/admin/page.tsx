@@ -10,39 +10,68 @@ import {
 
 export default async function AdminDashboard() {
   const { user } = await validateAdminSession();
-  const supabase = createClient();
+  
+  // 正确使用 await 等待 Promise
+  const supabase = await createClient();
 
   // 获取基础统计数据
-  const [
-    { count: totalUsers = 0 },
-    { count: activeUsers = 0 },
-    { count: totalKeys = 0 },
-    { count: activeKeys = 0 },
-    { count: totalGames = 0 },
-    { count: totalAIUsage = 0 },
-  ] = await Promise.all([
-    supabase.from('profiles').select('*', { count: 'exact', head: true }),
-    supabase.from('profiles')
-      .select('*', { count: 'exact', head: true })
-      .gt('account_expires_at', new Date().toISOString()),
-    supabase.from('access_keys').select('*', { count: 'exact', head: true }),
-    supabase.from('access_keys')
-      .select('*', { count: 'exact', head: true })
-      .eq('is_active', true)
-      .eq('used_count', 0),
-    supabase.from('game_sessions').select('*', { count: 'exact', head: true }),
-    supabase.from('ai_usage_records')
-      .select('*', { count: 'exact', head: true })
-      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()),
-  ]);
+  let totalUsers = 0;
+  let totalKeys = 0;
+  
+  try {
+    // 用户统计
+    const { count: usersCount } = await supabase
+      .from('profiles')
+      .select('*', { count: 'exact', head: true });
+    totalUsers = usersCount || 0;
+    
+    // 密钥统计
+    const { count: keysCount } = await supabase
+      .from('access_keys')
+      .select('*', { count: 'exact', head: true });
+    totalKeys = keysCount || 0;
+    
+  } catch (error) {
+    console.error('获取统计数据时出错:', error);
+  }
 
   const stats = [
-    { icon: Users, label: '总用户数', value: totalUsers, color: 'bg-blue-100 text-blue-600' },
-    { icon: Users, label: '活跃会员', value: activeUsers, color: 'bg-green-100 text-green-600' },
-    { icon: Key, label: '总密钥数', value: totalKeys, color: 'bg-purple-100 text-purple-600' },
-    { icon: Key, label: '可用密钥', value: activeKeys, color: 'bg-orange-100 text-orange-600' },
-    { icon: Gamepad2, label: '游戏总数', value: totalGames, color: 'bg-pink-100 text-pink-600' },
-    { icon: Brain, label: 'AI使用量', value: totalAIUsage, color: 'bg-indigo-100 text-indigo-600' },
+    { 
+      icon: Users, 
+      label: '总用户数', 
+      value: totalUsers, 
+      color: 'bg-blue-100 text-blue-600' 
+    },
+    { 
+      icon: Users, 
+      label: '活跃会员', 
+      value: '待统计', 
+      color: 'bg-green-100 text-green-600' 
+    },
+    { 
+      icon: Key, 
+      label: '总密钥数', 
+      value: totalKeys, 
+      color: 'bg-purple-100 text-purple-600' 
+    },
+    { 
+      icon: Key, 
+      label: '可用密钥', 
+      value: '待统计', 
+      color: 'bg-orange-100 text-orange-600' 
+    },
+    { 
+      icon: Gamepad2, 
+      label: '游戏总数', 
+      value: '待统计', 
+      color: 'bg-pink-100 text-pink-600' 
+    },
+    { 
+      icon: Brain, 
+      label: 'AI使用量', 
+      value: '待统计', 
+      color: 'bg-indigo-100 text-indigo-600' 
+    },
   ];
 
   return (
@@ -79,11 +108,11 @@ export default async function AdminDashboard() {
         <h2 className="text-lg font-semibold mb-4">快速操作</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <a
-            href="/admin/keys?generate=true"
+            href="/admin/keys"
             className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition-colors"
           >
             <Key className="w-8 h-8 text-blue-600 mb-2" />
-            <span className="text-sm font-medium">生成密钥</span>
+            <span className="text-sm font-medium">密钥管理</span>
           </a>
           <a
             href="/admin/users"
@@ -100,7 +129,7 @@ export default async function AdminDashboard() {
             <span className="text-sm font-medium">AI统计</span>
           </a>
           <a
-            href="/admin/settings"
+            href="#"
             className="flex flex-col items-center justify-center p-4 border rounded-lg hover:bg-gray-50 transition-colors"
           >
             <Gamepad2 className="w-8 h-8 text-amber-600 mb-2" />
