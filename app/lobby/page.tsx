@@ -1,3 +1,7 @@
+// /app/lobby/page.tsx
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import { redirect } from 'next/navigation'
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -7,8 +11,36 @@ import PreferencesModal from "@/components/profile/preferences-modal";
 import Link from "next/link";
 
 export default async function LobbyPage({ searchParams }: { searchParams?: { error?: string } }) {
+  // 1. 创建Supabase客户端
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
+  );
+  
+  // 2. 检查用户登录状态
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    redirect('/login');
+  }
+  
+  // 3. 检查会员有效期
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('account_expires_at')
+    .eq('id', user.id)
+    .single();
+  
+  const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
+  if (isExpired) {
+    redirect('/account-expired');
+  }
+  
+  // 4. 原有的业务逻辑
   const { data: themes } = await listAvailableThemes();
   const errorMessage = searchParams?.error ?? "";
+  
   return (
     <>
       {/* 首次进入首页时的偏好设置弹窗（仅登录用户，且偏好未完善时提示） */}
@@ -18,6 +50,16 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
         <p className="text-xs text-white/60 text-center mb-2">
           将网站添加到主屏幕可以获得近似app的体验哦~
         </p>
+        
+        {/* 会员状态提示（可选） */}
+        <div className="mb-4 p-3 glass rounded-xl">
+          <p className="text-sm text-green-400 text-center">
+            会员有效期至：{profile?.account_expires_at ? 
+              new Date(profile.account_expires_at).toLocaleDateString('zh-CN') : 
+              '未设置'}
+          </p>
+        </div>
+        
         <div className="flex items-center justify-between mb-6 pt-4">
           <div>
             <h2 className="text-2xl font-bold">首页</h2>
