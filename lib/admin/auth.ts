@@ -1,12 +1,11 @@
 // /lib/admin/auth.ts
 import { createClient } from '@/lib/supabase/server';
-import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 export async function validateAdminSession() {
   try {
-    const cookieStore = await cookies();
-    const supabase = createClient();
+    // 正确使用 await 等待 Promise
+    const supabase = await createClient();
     
     // 1. 验证用户是否登录
     const { data: { user }, error } = await supabase.auth.getUser();
