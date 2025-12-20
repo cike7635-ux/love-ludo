@@ -27,10 +27,10 @@ export default async function ProfilePage() {
 
   if (user) {
     await ensureProfile();
-    // 查询时增加 account_expires_at 字段
+    // 查询时增加 account_expires_at 和 access_key_id 字段
     const { data: profile } = await supabase
       .from("profiles")
-      .select("id, nickname, preferences, account_expires_at")
+      .select("id, nickname, preferences, access_key_id, account_expires_at") // 修改这里
       .eq("id", user.id)
       .maybeSingle();
 
