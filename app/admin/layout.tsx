@@ -1,5 +1,6 @@
-// /app/admin/layout.tsx
+// /app/admin/layout.tsx - 简化版本
 import { requireAdmin } from '@/lib/admin/auth';
+import LogoutButton from '@/components/admin/logout-button';
 
 export default async function AdminLayout({
   children,
@@ -25,18 +26,7 @@ export default async function AdminLayout({
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">管理员</span>
-              <button
-                onClick={async () => {
-                  'use server';
-                  const { createClient } = await import('@/lib/supabase/server');
-                  const supabase = createClient();
-                  await supabase.auth.signOut();
-                  redirect('/login');
-                }}
-                className="px-3 py-1 text-sm text-red-600 hover:text-red-800"
-              >
-                退出
-              </button>
+              <LogoutButton />
             </div>
           </div>
         </div>
