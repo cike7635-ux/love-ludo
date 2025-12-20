@@ -126,8 +126,8 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
       // 强制退出当前会话
       await supabase.auth.signOut();
       
-      // 重定向到登录页，携带错误信息
-      redirect('/login?error=session_expired&message=您的账号已在其他设备登录，请重新登录');
+      // ============ 【修改这里】重定向到专门的过期提示页面 ============
+      redirect(`/login/expired?email=${encodeURIComponent(user.email)}&last_login_time=${encodeURIComponent(lastLoginTime.toISOString())}`);
     }
   }
   
