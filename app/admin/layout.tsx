@@ -1,18 +1,17 @@
 // /app/admin/layout.tsx - 简化版本
 import { requireAdmin } from '@/lib/admin/auth';
-import LogoutButton from '@/components/admin/logout-button';
 
 export default async function AdminLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // 验证管理员权限
+  console.log('🔄 开始渲染后台布局...');
   await requireAdmin();
+  console.log('✅ 权限验证通过，渲染后台');
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 简单的顶部导航 */}
       <nav className="bg-white shadow-sm border-b">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
@@ -26,15 +25,18 @@ export default async function AdminLayout({
             </div>
             <div className="flex items-center space-x-4">
               <span className="text-sm text-gray-600">管理员</span>
-              <LogoutButton />
+              <a
+                href="/login?logout=true"
+                className="px-3 py-1 text-sm text-red-600 hover:text-red-800"
+              >
+                退出登录
+              </a>
             </div>
           </div>
         </div>
       </nav>
 
-      {/* 侧边栏和主内容 */}
       <div className="flex">
-        {/* 简单侧边栏 */}
         <aside className="w-64 bg-white border-r min-h-[calc(100vh-4rem)]">
           <nav className="mt-5 px-2 space-y-1">
             <a
@@ -64,7 +66,6 @@ export default async function AdminLayout({
           </nav>
         </aside>
 
-        {/* 主内容区域 */}
         <main className="flex-1 p-6">
           {children}
         </main>
