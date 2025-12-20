@@ -1,6 +1,7 @@
 // /middleware.ts
 import { updateSession } from "@/lib/supabase/middleware";
-import { createMiddlewareClient } from '@supabase/ssr';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { NextResponse, type NextRequest } from 'next/server';
 import type { Database } from '@/lib/database.types';
 
@@ -12,7 +13,28 @@ export async function middleware(request: NextRequest) {
   const response = updateSessionResponse || NextResponse.next();
   
   // 2. 创建 Supabase 客户端
-  const supabase = createMiddlewareClient<Database>({ req: request, res: response });
+ const supabase = createServerClient<Database>(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll();
+      },
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+        response = NextResponse.next({
+          request: {
+            headers: request.headers,
+          },
+        });
+        cookiesToSet.forEach(({ name, value, options }) =>
+          response.cookies.set(name, value, options)
+        );
+      },
+    },
+  }
+);
 
   try {
     // 3. 获取当前会话
