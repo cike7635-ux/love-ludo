@@ -36,7 +36,8 @@ export function LoginForm({
     setLoginSuccess(false);
 
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
+      // ✅ 关键修正：同时解构 data 和 error，重命名为 authData
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password: password.trim(),
       });
@@ -51,38 +52,36 @@ export function LoginForm({
           throw new Error(`登录失败: ${authError.message}`);
         }
       }
-// ============【第一步：插入此代码块】============
-// 生成并保存本次登录的会话标识
-try {
-  // 创建一个唯一的会话指纹（示例：使用时间戳和随机字符串）
-  const sessionFingerprint = `web_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
-  
-  // 将本次登录的“最新”标识更新到数据库
-  const { error: updateError } = await supabase
-    .from('profiles')
-    .update({
-      last_login_session: sessionFingerprint, // 存入唯一标识
-      last_login_at: new Date().toISOString() // 存入登录时间
-    })
-    .eq('id', authData.user.id); // 关键：确保只更新当前登录用户
 
-  if (updateError) {
-    console.error('[登录] 更新会话记录失败:', updateError);
-    // 这里不阻断整个登录流程，仅记录错误
-  } else {
-    console.log('[登录] 用户会话标识已更新');
-    // （可选）您也可以将标识存到客户端，例如：
-    // localStorage.setItem('current_session_id', sessionFingerprint);
-  }
-} catch (sessionErr) {
-  console.error('[登录] 处理会话时发生异常:', sessionErr);
-}
-// ============【代码块插入结束】============
-      // 标记登录成功，显示成功反馈
+      // ✅ 标记登录成功，显示成功反馈
       setLoginSuccess(true);
       
+      // ============ 记录登录会话 ============
+      try {
+        // 创建一个唯一的会话指纹
+        const sessionFingerprint = `web_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
+        
+        // ✅ 现在 authData 变量已正确定义，可以安全使用
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update({
+            last_login_session: sessionFingerprint, // 存入唯一标识
+            last_login_at: new Date().toISOString() // 存入登录时间
+          })
+          .eq('id', authData.user.id); // ✅ 现在这行不会报错了
+
+        if (updateError) {
+          console.error('[登录] 更新会话记录失败:', updateError);
+          // 这里不阻断整个登录流程，仅记录错误
+        } else {
+          console.log('[登录] 用户会话标识已更新');
+        }
+      } catch (sessionErr) {
+        console.error('[登录] 处理会话时发生异常:', sessionErr);
+      }
+      // ============ 记录结束 ============
+      
       // 关键改进：等待并确认用户状态后再跳转
-      // 方法1：短暂延迟后跳转（简单有效）
       setTimeout(async () => {
         // 可选：再次确认用户状态
         const { data: { user } } = await supabase.auth.getUser();
@@ -93,11 +92,9 @@ try {
           // 如果状态异常，显示错误
           setError('登录状态异常，请刷新页面重试');
           setLoginSuccess(false);
+          setIsLoading(false);
         }
       }, 800); // 800ms延迟，让用户看到成功提示
-
-      // 方法2（备选）：立即跳转但添加加载状态
-      // router.push(redirectTo);
 
     } catch (error: unknown) {
       setError(error instanceof Error ? error.message : "登录过程中发生未知错误");
