@@ -1,5 +1,5 @@
 // /app/login/expired/page.tsx
-"use client"; // 声明为客户端组件
+"use client"; // 声明为客户端组 件
 
 import { useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
