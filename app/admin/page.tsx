@@ -1,4 +1,4 @@
-// /app/admin/page.tsx - 最终修复版本
+// /app/admin/page.tsx - 修复版本
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
@@ -31,6 +31,19 @@ function AdminLoginForm() {
         `重定向目标: ${redirectTo}`
       );
     }
+    
+    // 隐藏底部导航栏（BottomNav）
+    const bottomNav = document.querySelector('[class*="BottomNav"]') as HTMLElement | null;
+    if (bottomNav) {
+      bottomNav.style.display = 'none';
+    }
+    
+    // 清理函数：页面卸载时恢复底部导航栏
+    return () => {
+      if (bottomNav) {
+        bottomNav.style.display = '';
+      }
+    };
   }, [redirectTo]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -163,10 +176,11 @@ function AdminLoginForm() {
                 disabled={loading}
                 className="text-gray-400 hover:text-white transition-colors disabled:opacity-50 p-1"
               >
+                {/* 修正：默认不显示密码时用闭眼（有斜杠），显示密码时用睁眼（无斜杠） */}
                 {showPassword ? (
-                  <EyeOff className="w-4 h-4 md:w-5 md:h-5" /> // 显示密码时：闭眼（有斜杠）
+                  <Eye className="w-4 h-4 md:w-5 md:h-5" /> // 显示密码：睁眼（无斜杠）
                 ) : (
-                  <Eye className="w-4 h-4 md:w-5 md:h-5" /> // 隐藏密码时：睁眼（无斜杠）
+                  <EyeOff className="w-4 h-4 md:w-5 md:h-5" /> // 隐藏密码：闭眼（有斜杠）
                 )}
               </button>
             </div>
@@ -195,10 +209,11 @@ function AdminLoginForm() {
                 disabled={loading}
                 className="text-gray-400 hover:text-white transition-colors disabled:opacity-50 p-1"
               >
+                {/* 修正：默认不显示密钥时用闭眼（有斜杠），显示密钥时用睁眼（无斜杠） */}
                 {showAdminKey ? (
-                  <EyeOff className="w-4 h-4 md:w-5 md:h-5" /> // 显示密钥时：闭眼（有斜杠）
+                  <Eye className="w-4 h-4 md:w-5 md:h-5" /> // 显示密钥：睁眼（无斜杠）
                 ) : (
-                  <Eye className="w-4 h-4 md:w-5 md:h-5" /> // 隐藏密钥时：睁眼（无斜杠）
+                  <EyeOff className="w-4 h-4 md:w-5 md:h-5" /> // 隐藏密钥：闭眼（有斜杠）
                 )}
               </button>
             </div>
@@ -290,11 +305,29 @@ function LoadingSpinner() {
   );
 }
 
-// 主组件 - 使用与普通登录页面完全相同的背景
+// 主组件 - 使用与普通登录页面完全相同的结构
 export default function AdminLoginPage() {
   return (
     // 完全使用普通登录页面的外层样式
-    <div className="flex min-h-svh w-full items-center justify-center p-3 md:p-4 lg:p-6">
+    <div className="flex min-h-screen w-full items-center justify-center p-3 md:p-4 lg:p-6 bg-gradient-to-br from-gray-900 via-black to-gray-900">
+      <style jsx global>{`
+        /* 确保管理员登录页面没有底部导航栏 */
+        [class*="BottomNav"] {
+          display: none !important;
+        }
+        
+        /* 确保背景正确 */
+        body {
+          background: linear-gradient(180deg, #0a0a12 0%, #12101a 50%, #1a0f1f 100%) !important;
+          background-attachment: fixed !important;
+        }
+        
+        /* 移除可能覆盖背景的样式 */
+        .bg-background {
+          background: transparent !important;
+        }
+      `}</style>
+      
       <Suspense fallback={<LoadingSpinner />}>
         <AdminLoginForm />
       </Suspense>
