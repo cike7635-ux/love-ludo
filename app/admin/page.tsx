@@ -1,15 +1,17 @@
-// /app/admin/page.tsx - 使用全屏固定定位
+// /app/admin/page.tsx - 修复图标和手机显示问题
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Mail, Lock, Key, Shield, AlertCircle, Loader2 } from 'lucide-react';
+import { Mail, Lock, Key, Eye, EyeOff, Shield, AlertCircle, Loader2 } from 'lucide-react';
 import Link from 'next/link';
 
 function AdminLoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [adminKey, setAdminKey] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showAdminKey, setShowAdminKey] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -20,7 +22,6 @@ function AdminLoginForm() {
   useEffect(() => {
     // 1. 隐藏所有导航栏和底部元素
     const hideElements = () => {
-      // 找到并隐藏所有可能的导航元素
       const selectors = [
         'nav',
         'footer',
@@ -43,7 +44,6 @@ function AdminLoginForm() {
     
     // 2. 设置全屏样式
     const setFullscreenStyles = () => {
-      // 设置 body 样式
       document.body.style.position = 'fixed';
       document.body.style.top = '0';
       document.body.style.left = '0';
@@ -54,11 +54,9 @@ function AdminLoginForm() {
       document.body.style.overflow = 'hidden';
       document.body.style.backgroundColor = '#0a0a12';
       
-      // 设置 html 样式
       document.documentElement.style.height = '100%';
       document.documentElement.style.overflow = 'hidden';
       
-      // 设置根元素样式
       const root = document.getElementById('__next');
       if (root) {
         root.style.height = '100%';
@@ -67,16 +65,13 @@ function AdminLoginForm() {
       }
     };
     
-    // 立即执行
     hideElements();
     setFullscreenStyles();
     
-    // 延迟执行，确保DOM加载完成
     setTimeout(hideElements, 100);
     setTimeout(hideElements, 500);
     setTimeout(hideElements, 1000);
     
-    // 监听DOM变化
     const observer = new MutationObserver((mutations) => {
       mutations.forEach(() => {
         hideElements();
@@ -93,7 +88,6 @@ function AdminLoginForm() {
     
     return () => {
       observer.disconnect();
-      // 恢复样式
       document.body.style.position = '';
       document.body.style.top = '';
       document.body.style.left = '';
@@ -194,68 +188,102 @@ function AdminLoginForm() {
         </div>
 
         <div className="bg-gray-800/50 backdrop-blur-sm rounded-2xl p-6 border border-gray-700/50">
-          <form onSubmit={handleLogin} className="space-y-4">
+          <form onSubmit={handleLogin} className="space-y-6">
+            {/* 邮箱输入 - 手机端增大图标 */}
             <div>
               <label className="block text-sm text-gray-300 mb-2">管理员邮箱</label>
               <div className="flex items-center bg-gray-900/50 rounded-lg p-3 border border-gray-700">
-                <Mail className="w-5 h-5 text-gray-400 mr-2" />
+                <Mail className="w-6 h-6 text-gray-400 mr-3" />
                 <input
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="输入管理员邮箱"
-                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500"
+                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500 text-base"
                   required
                   disabled={loading}
                 />
               </div>
             </div>
 
+            {/* 密码输入 - 修复小眼睛图标 */}
             <div>
               <label className="block text-sm text-gray-300 mb-2">密码</label>
               <div className="flex items-center bg-gray-900/50 rounded-lg p-3 border border-gray-700">
-                <Lock className="w-5 h-5 text-gray-400 mr-2" />
+                <Lock className="w-6 h-6 text-gray-400 mr-3" />
                 <input
-                  type="password"
+                  type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="输入密码"
-                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500"
+                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500 text-base"
                   required
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={loading}
+                  className="ml-2 p-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                  aria-label={showPassword ? "隐藏密码" : "显示密码"}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
               </div>
             </div>
 
+            {/* 管理员密钥输入 - 修复小眼睛图标 */}
             <div>
               <label className="block text-sm text-gray-300 mb-2">管理员密钥</label>
               <div className="flex items-center bg-gray-900/50 rounded-lg p-3 border border-gray-700">
-                <Key className="w-5 h-5 text-gray-400 mr-2" />
+                <Key className="w-6 h-6 text-gray-400 mr-3" />
                 <input
-                  type="password"
+                  type={showAdminKey ? "text" : "password"}
                   value={adminKey}
                   onChange={(e) => setAdminKey(e.target.value)}
                   placeholder="输入管理员密钥"
-                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500"
+                  className="flex-1 bg-transparent text-white outline-none placeholder-gray-500 text-base"
                   required
                   disabled={loading}
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminKey(!showAdminKey)}
+                  disabled={loading}
+                  className="ml-2 p-2 text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                  aria-label={showAdminKey ? "隐藏密钥" : "显示密钥"}
+                >
+                  {showAdminKey ? (
+                    <EyeOff className="w-5 h-5" />
+                  ) : (
+                    <Eye className="w-5 h-5" />
+                  )}
+                </button>
               </div>
+              <p className="text-xs text-gray-500 mt-2">
+                请联系系统管理员获取密钥
+              </p>
             </div>
 
+            {/* 错误提示 */}
             {error && (
-              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
+              <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-4">
                 <div className="flex items-center text-red-400">
-                  <AlertCircle className="w-5 h-5 mr-2" />
+                  <AlertCircle className="w-5 h-5 mr-3 flex-shrink-0" />
                   <span className="text-sm">{error}</span>
                 </div>
               </div>
             )}
 
+            {/* 登录按钮 */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-brand-pink to-brand-rose text-white py-3 rounded-lg font-medium disabled:opacity-50 flex items-center justify-center hover:opacity-90 transition-opacity"
+              className="w-full bg-gradient-to-r from-brand-pink to-brand-rose text-white py-3 rounded-lg font-medium disabled:opacity-50 flex items-center justify-center hover:opacity-90 transition-opacity text-base"
             >
               {loading ? (
                 <>
@@ -271,14 +299,14 @@ function AdminLoginForm() {
           <div className="mt-6 pt-4 border-t border-gray-700 text-center">
             <Link 
               href="/login" 
-              className="text-sm text-brand-pink hover:text-brand-rose transition-colors"
+              className="text-sm text-brand-pink hover:text-brand-rose transition-colors hover:underline"
             >
               返回普通用户登录
             </Link>
           </div>
         </div>
 
-        <div className="mt-4 text-center">
+        <div className="mt-6 text-center">
           <p className="text-xs text-gray-500">
             Love Ludo 后台管理系统 v1.0 · 希夷游戏
           </p>
@@ -288,32 +316,38 @@ function AdminLoginForm() {
   );
 }
 
+// 加载状态组件
+function LoadingSpinner() {
+  return (
+    <div 
+      className="flex items-center justify-center w-full h-full min-h-screen"
+      style={{
+        background: 'linear-gradient(180deg, #0a0a12 0%, #12101a 50%, #1a0f1f 100%)',
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        margin: 0,
+        padding: '1rem',
+        overflow: 'auto'
+      }}
+    >
+      <div className="w-full max-w-md text-center">
+        <div className="w-16 h-16 bg-gradient-to-br from-brand-pink to-brand-rose rounded-2xl flex items-center justify-center mx-auto mb-4">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+        <h1 className="text-2xl font-bold text-white mb-2">加载中...</h1>
+        <p className="text-gray-400">正在准备管理员登录</p>
+      </div>
+    </div>
+  );
+}
+
+// 主组件
 export default function AdminLoginPage() {
   return (
-    <Suspense fallback={
-      <div 
-        className="flex items-center justify-center w-full h-full min-h-screen"
-        style={{
-          background: 'linear-gradient(180deg, #0a0a12 0%, #12101a 50%, #1a0f1f 100%)',
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          margin: 0,
-          padding: '1rem',
-          overflow: 'auto'
-        }}
-      >
-        <div className="w-full max-w-md text-center">
-          <div className="w-16 h-16 bg-gradient-to-br from-brand-pink to-brand-rose rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <Loader2 className="w-8 h-8 text-white animate-spin" />
-          </div>
-          <h1 className="text-2xl font-bold text-white mb-2">加载中...</h1>
-          <p className="text-gray-400">正在准备管理员登录</p>
-        </div>
-      </div>
-    }>
+    <Suspense fallback={<LoadingSpinner />}>
       <AdminLoginForm />
     </Suspense>
   );
