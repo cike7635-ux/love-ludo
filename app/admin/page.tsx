@@ -1,16 +1,36 @@
-// /app/admin/page.tsx - 修复登录逻辑
+// /app/admin/page.tsx - 修复完整版本
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Mail, Lock, Key, Eye, EyeOff, Shield, AlertCircle, Loader2 } from 'lucide-react';
+import Link from 'next/link';
 
 export default function AdminLoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [adminKey, setAdminKey] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showAdminKey, setShowAdminKey] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [debugInfo, setDebugInfo] = useState<string>('');
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTo = searchParams.get('redirect') || '/admin/dashboard';
+
+  // 调试：检查环境变量
+  useEffect(() => {
+    console.log('🔍 管理员登录页面加载');
+    console.log('NEXT_PUBLIC_ADMIN_KEY:', process.env.NEXT_PUBLIC_ADMIN_KEY ? '***已设置***' : '未设置');
+    
+    if (process.env.NODE_ENV === 'development') {
+      setDebugInfo(
+        `密钥配置: ${process.env.NEXT_PUBLIC_ADMIN_KEY ? '✅' : '❌'}, ` +
+        `重定向目标: ${redirectTo}`
+      );
+    }
+  }, [redirectTo]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -18,6 +38,8 @@ export default function AdminLoginPage() {
     setLoading(true);
 
     try {
+      console.log('🔐 开始管理员登录验证...');
+      
       // 1. 验证管理员密钥
       const requiredAdminKey = process.env.NEXT_PUBLIC_ADMIN_KEY;
       
@@ -29,6 +51,8 @@ export default function AdminLoginPage() {
         throw new Error('管理员密钥错误');
       }
 
+      console.log('✅ 管理员密钥验证通过');
+
       // 2. 验证管理员邮箱
       const adminEmails = process.env.ADMIN_EMAILS?.split(',') || ['2200691917@qq.com'];
       const emailLower = email.trim().toLowerCase();
@@ -39,6 +63,8 @@ export default function AdminLoginPage() {
       if (!isAdmin) {
         throw new Error('非管理员邮箱');
       }
+      
+      console.log('✅ 管理员邮箱验证通过');
 
       // 3. 登录 Supabase
       const { createBrowserClient } = await import('@supabase/ssr');
@@ -54,108 +80,180 @@ export default function AdminLoginPage() {
 
       if (signInError) throw signInError;
 
+      console.log('✅ Supabase登录成功');
+
       // ⭐ 关键：设置管理员密钥验证标记cookie
       // 这个cookie会在中间件中检查
       document.cookie = 'admin_key_verified=true; path=/admin; max-age=86400; SameSite=Strict';
       
       // 等待cookie设置完成
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 300));
       
       console.log('✅ 管理员登录成功，跳转到仪表板');
-      router.push('/admin/dashboard');
+      router.push(redirectTo);
       router.refresh();
 
     } catch (err: any) {
       console.error('❌ 管理员登录失败:', err);
-      setError(err.message);
+      setError(err.message || '登录失败，请检查凭据');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+    <div className="flex min-h-svh w-full items-center justify-center bg-gradient-to-br from-gray-900 to-black p-6">
       <div className="w-full max-w-md">
+        {/* 调试信息（仅开发环境显示） */}
+        {process.env.NODE_ENV === 'development' && debugInfo && (
+          <div className="mb-4 p-3 bg-slate-800 rounded-xl border border-slate-700">
+            <p className="text-xs text-slate-400">🔍 调试信息: {debugInfo}</p>
+          </div>
+        )}
+
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">管理员登录</h1>
-          <p className="text-gray-600 mt-2">需要管理员邮箱、密码和密钥</p>
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-brand-pink to-brand-rose rounded-3xl mb-4 shadow-lg">
+            <Shield className="w-10 h-10 text-white" />
+          </div>
+          <h1 className="text-3xl font-bold mb-2 bg-gradient-to-r from-brand-pink via-brand-rose to-brand-pink bg-clip-text text-transparent">
+            系统管理员登录
+          </h1>
+          <p className="text-gray-400">仅限授权管理员访问后台系统</p>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-xl p-8">
+        <div className="glass rounded-2xl p-6">
           <form onSubmit={handleLogin} className="space-y-6">
-            {/* 表单字段... 使用之前的代码 */}
+            {/* 邮箱输入 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm text-gray-300 mb-2">
                 管理员邮箱
               </label>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="2200691917@qq.com"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-                disabled={loading}
-              />
+              <div className="glass rounded-xl p-3 flex items-center space-x-2">
+                <Mail className="w-5 h-5 text-gray-400" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="输入管理员邮箱"
+                  className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0 disabled:opacity-60"
+                  required
+                  disabled={loading}
+                />
+              </div>
             </div>
 
+            {/* 密码输入 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm text-gray-300 mb-2">
                 密码
               </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="请输入密码"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-                disabled={loading}
-              />
+              <div className="glass rounded-xl p-3 flex items-center space-x-2">
+                <Lock className="w-5 h-5 text-gray-400" />
+                <input
+                  type={showPassword ? "text" : "password"}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="输入密码"
+                  className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0 disabled:opacity-60"
+                  required
+                  disabled={loading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  disabled={loading}
+                  className="text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
 
+            {/* 管理员密钥输入 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm text-gray-300 mb-2">
                 管理员密钥
                 <span className="text-xs text-gray-500 ml-2">（必须输入正确的密钥）</span>
               </label>
-              <input
-                type="password"
-                value={adminKey}
-                onChange={(e) => setAdminKey(e.target.value)}
-                placeholder="输入管理员密钥"
-                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-                disabled={loading}
-              />
+              <div className="glass rounded-xl p-3 flex items-center space-x-2">
+                <Key className="w-5 h-5 text-gray-400" />
+                <input
+                  type={showAdminKey ? "text" : "password"}
+                  value={adminKey}
+                  onChange={(e) => setAdminKey(e.target.value)}
+                  placeholder="输入管理员密钥"
+                  className="flex-1 bg-transparent border-none outline-none text-white placeholder-gray-500 focus-visible:ring-0 focus-visible:ring-offset-0 disabled:opacity-60"
+                  required
+                  disabled={loading}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowAdminKey(!showAdminKey)}
+                  disabled={loading}
+                  className="text-gray-400 hover:text-white transition-colors disabled:opacity-50"
+                >
+                  {showAdminKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-xs text-gray-500">
+                  联系系统管理员获取密钥
+                </span>
+                <span className={`px-2 py-1 text-xs font-medium rounded ${
+                  process.env.NEXT_PUBLIC_ADMIN_KEY 
+                    ? 'bg-green-500/20 text-green-400' 
+                    : 'bg-red-500/20 text-red-400'
+                }`}>
+                  {process.env.NEXT_PUBLIC_ADMIN_KEY ? '密钥已配置' : '密钥未配置'}
+                </span>
+              </div>
             </div>
 
+            {/* 错误提示 */}
             {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
-                <div className="flex items-center">
-                  <svg className="w-5 h-5 text-red-500 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span className="text-sm text-red-700">{error}</span>
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 backdrop-blur p-4">
+                <div className="flex items-center space-x-2 text-red-400">
+                  <AlertCircle className="w-5 h-5 flex-shrink-0" />
+                  <span className="text-sm">{error}</span>
                 </div>
               </div>
             )}
 
+            {/* 登录按钮 */}
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white font-medium py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center"
+              className="w-full gradient-primary py-3.5 rounded-xl font-semibold glow-pink transition-all hover:scale-105 active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:scale-100 text-white flex items-center justify-center"
             >
               {loading ? (
                 <>
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   验证中...
                 </>
               ) : (
-                '登录后台管理系统'
+                '进入后台管理系统'
               )}
             </button>
           </form>
+
+          {/* 底部链接 */}
+          <div className="mt-8 pt-6 border-t border-white/10">
+            <div className="text-center">
+              <Link 
+                href="/login" 
+                className="text-sm text-brand-pink hover:text-brand-rose transition-colors hover:underline"
+              >
+                返回普通用户登录
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        {/* 版本信息 */}
+        <div className="mt-6 text-center">
+          <p className="text-xs text-gray-500">
+            后台管理系统 v1.0 · 希夷书斋
+          </p>
         </div>
       </div>
     </div>
