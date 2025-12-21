@@ -1,4 +1,4 @@
-// /lib/admin/auth.ts - 修复版本
+// /lib/admin/auth.ts - 简化的验证函数
 import { createClient } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 
@@ -8,47 +8,27 @@ export async function validateAdminSession() {
     const { data: { user }, error } = await supabase.auth.getUser();
     
     if (error || !user) {
-      console.log('❌ 验证失败: 用户未登录');
       return { isAdmin: false, user: null };
     }
 
-    // 获取环境变量中的管理员邮箱
-    const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
-    console.log('📋 管理员邮箱列表:', adminEmails);
-    console.log('👤 当前用户邮箱:', user.email);
-    
-    // 检查用户邮箱是否在管理员列表中
-    const isAdmin = adminEmails.includes(user.email || '');
-    console.log('🔐 是否是管理员:', isAdmin);
+    // 检查是否是管理员邮箱
+    const adminEmails = ['2200691917@qq.com']; // 硬编码管理员邮箱
+    const isAdmin = adminEmails.includes(user.email?.toLowerCase() || '');
     
     if (!isAdmin) {
-      console.log(`❌ 非管理员尝试访问: ${user.email}`);
       return { isAdmin: false, user };
     }
     
-    console.log(`✅ 管理员验证成功: ${user.email}`);
     return { isAdmin: true, user };
     
   } catch (error) {
-    console.error('🔥 管理员验证出错:', error);
     return { isAdmin: false, user: null };
   }
 }
 
-// 在 requireAdmin 函数中修改
 export async function requireAdmin() {
-  const { isAdmin, user } = await validateAdminSession();
-  
+  const { isAdmin } = await validateAdminSession();
   if (!isAdmin) {
-    if (user) {
-      // 已登录但不是管理员
-      redirect('/admin/unauthorized');
-    } else {
-      // 未登录，重定向到管理员登录页
-      redirect('/admin/login?redirect=/admin');
-    }
+    redirect('/admin');
   }
-}
-  
-  console.log('🎯 验证通过，继续渲染');
 }
