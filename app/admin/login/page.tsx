@@ -1,183 +1,46 @@
-// /app/admin/login/page.tsx
-'use client';
+// /app/admin/page.tsx - 修复版本（这才是真正的管理员登录页）
+import { validateAdminSession } from '@/lib/admin/auth';
+import { redirect } from 'next/navigation';
+import AdminLoginForm from '@/components/admin/login-form';
 
-import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { createBrowserClient } from '@supabase/ssr';
-import { Shield, AlertTriangle, Key, Mail } from 'lucide-react';
+export default async function AdminPage() {
+  // 先检查是否已经是管理员
+  const { isAdmin } = await validateAdminSession();
+  
+  if (isAdmin) {
+    // 如果已经是管理员，跳转到仪表板
+    redirect('/admin/dashboard');
+  }
 
-export default function AdminLoginPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [adminKey, setAdminKey] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const redirectTo = searchParams.get('redirect') || '/admin';
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError('');
-    setLoading(true);
-
-    try {
-      // 验证管理员密钥（可以存储在环境变量中）
-      const validAdminKey = process.env.NEXT_PUBLIC_ADMIN_KEY || 'ADMIN@2024';
-      if (adminKey !== validAdminKey) {
-        setError('管理员密钥错误');
-        setLoading(false);
-        return;
-      }
-
-      // 使用 Supabase 登录
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!
-      );
-
-      const { data, error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: password,
-      });
-
-      if (signInError) {
-        throw signInError;
-      }
-
-      // 检查是否是管理员邮箱
-      const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
-      if (!adminEmails.includes(email.trim())) {
-        // 登出非管理员用户
-        await supabase.auth.signOut();
-        setError('非管理员邮箱，无权访问后台');
-        setLoading(false);
-        return;
-      }
-
-      // 登录成功，重定向到后台
-      console.log('✅ 管理员登录成功:', email);
-      router.push(redirectTo);
-      router.refresh();
-
-    } catch (err: any) {
-      console.error('管理员登录失败:', err);
-      setError(err.message || '登录失败');
-      setLoading(false);
-    }
-  };
-
+  // 如果不是管理员，显示管理员登录页面
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-900 to-gray-950 p-4">
-      <div className="bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md p-8">
-        {/* 头部 */}
-        <div className="flex flex-col items-center mb-8">
-          <div className="w-16 h-16 bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl flex items-center justify-center mb-4">
-            <Shield className="w-8 h-8 text-white" />
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl mb-4 shadow-lg">
+            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
           </div>
-          <h1 className="text-2xl font-bold text-white text-center">
-            Love Ludo 后台管理
-          </h1>
-          <p className="text-gray-400 text-sm mt-2 text-center">
-            仅限系统管理员访问
-          </p>
+          <h1 className="text-3xl font-bold text-gray-900">Love Ludo 管理后台</h1>
+          <p className="text-gray-600 mt-2">系统管理员专用登录通道</p>
         </div>
 
-        {/* 登录表单 */}
-        <form onSubmit={handleLogin} className="space-y-6">
-          {/* 邮箱输入 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              管理员邮箱
-            </label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="输入管理员邮箱"
-                className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
+        <div className="bg-white rounded-2xl shadow-xl p-8">
+          <AdminLoginForm />
+          
+          <div className="mt-8 pt-6 border-t border-gray-200">
+            <div className="text-center">
+              <p className="text-sm text-gray-600">
+                普通用户请前往{' '}
+                <a href="/" className="text-blue-600 hover:text-blue-800 font-medium">
+                  游戏大厅
+                </a>
+              </p>
+              <p className="text-xs text-gray-500 mt-2">
+                © {new Date().getFullYear()} 希夷游戏 · Love Ludo
+              </p>
             </div>
-          </div>
-
-          {/* 密码输入 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              密码
-            </label>
-            <div className="relative">
-              <Key className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="输入密码"
-                className="w-full pl-10 pr-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                required
-              />
-            </div>
-          </div>
-
-          {/* 管理员密钥 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
-              管理员密钥
-            </label>
-            <input
-              type="password"
-              value={adminKey}
-              onChange={(e) => setAdminKey(e.target.value)}
-              placeholder="输入管理员密钥"
-              className="w-full px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              required
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              请联系系统管理员获取密钥
-            </p>
-          </div>
-
-          {/* 错误提示 */}
-          {error && (
-            <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-              <div className="flex items-center text-red-400">
-                <AlertTriangle className="w-5 h-5 mr-2" />
-                <span className="text-sm">{error}</span>
-              </div>
-            </div>
-          )}
-
-          {/* 登录按钮 */}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium py-3 rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center"
-          >
-            {loading ? (
-              <>
-                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                登录中...
-              </>
-            ) : (
-              '进入后台管理'
-            )}
-          </button>
-        </form>
-
-        {/* 底部信息 */}
-        <div className="mt-8 text-center">
-          <div className="border-t border-gray-700 pt-6">
-            <p className="text-sm text-gray-400">
-              普通用户请访问{' '}
-              <a href="/login" className="text-blue-400 hover:text-blue-300">
-                普通登录页面
-              </a>
-            </p>
-            <p className="text-xs text-gray-500 mt-2">
-              © {new Date().getFullYear()} Love Ludo · 希夷游戏
-            </p>
           </div>
         </div>
       </div>
