@@ -1,4 +1,4 @@
-/app/login/page.tsx - 修复重定向逻辑
+// /app/login/page.tsx - 修复重定向逻辑
 import Link from "next/link";
 import { LoginForm } from "@/components/login-form";
 import { SignUpForm } from "@/components/sign-up-form";
@@ -122,3 +122,4 @@ export default async function Page({
       </div>
     </div>
   );
+}
