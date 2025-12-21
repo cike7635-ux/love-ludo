@@ -1,4 +1,4 @@
-// /middleware.ts 
+// /middleware.ts - 修复版本
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -32,17 +32,7 @@ function getJwtCreationTime(jwt: string): Date | null {
   }
 }
 
-// 检查是否是管理员（仅用于日志记录，不再用于权限控制）
-function isAdminEmail(email: string | undefined | null): boolean {
-  if (!email) return false;
-  
-  const adminEmails = process.env.ADMIN_EMAILS?.split(',') || ['2200691917@qq.com'];
-  return adminEmails.some(adminEmail => 
-    adminEmail.trim().toLowerCase() === email.toLowerCase()
-  );
-}
-
-// 检查是否受保护的游戏路径
+// 检查是否是受保护的游戏路径
 function isProtectedGamePath(path: string): boolean {
   const protectedPaths = [
     '/lobby',
@@ -51,26 +41,59 @@ function isProtectedGamePath(path: string): boolean {
     '/themes',
     '/game-history',
   ];
-  return protectedPaths.some(p => path.startsWith(p));
+  
+  // 精确匹配或前缀匹配
+  return protectedPaths.some(p => path === p || path.startsWith(p + '/'));
 }
 
-// 检查是否公开路径
+// 检查是否公开路径（不包含游戏路径）
 function isPublicPath(path: string): boolean {
-  const publicPaths = [
+  // 精确匹配的公开路径
+  const exactPublicPaths = [
     '/',
     '/login',
-    '/login/expired',
-    '/auth/forgot-password',
-    '/auth/confirm',
-    '/auth/error',
     '/account-expired',
     '/renew',
-    '/api/auth/signup-with-key',
-    '/api/auth/renew-account',
-    '/admin',           // ⭐ 管理员页面也作为公开路径，由/admin自己处理验证
+    '/admin',
     '/admin/unauthorized',
   ];
-  return publicPaths.some(p => path.startsWith(p));
+  
+  // 前缀匹配的公开路径
+  const prefixPublicPaths = [
+    '/login/', // login/expired 等
+    '/auth/',
+    '/api/auth/',
+    '/admin/', // 只放行 /admin 和 /admin/unauthorized，其他/admin路径由页面处理
+  ];
+  
+  // 精确匹配
+  if (exactPublicPaths.includes(path)) {
+    return true;
+  }
+  
+  // 前缀匹配（但要排除误匹配）
+  for (const prefix of prefixPublicPaths) {
+    if (path.startsWith(prefix)) {
+      // 特殊情况：/login 已经处理过了，这里处理 /login/xxx
+      if (prefix === '/login/' && path.startsWith('/login/expired')) {
+        return true;
+      }
+      
+      // 特殊情况：/admin 路径只放行特定页面
+      if (prefix === '/admin/') {
+        // 只放行 /admin 和 /admin/unauthorized
+        if (path === '/admin/unauthorized') {
+          return true;
+        }
+        // 其他 /admin/xxx 路径不放行，由页面处理验证
+        return false;
+      }
+      
+      return true;
+    }
+  }
+  
+  return false;
 }
 
 export async function middleware(request: NextRequest) {
@@ -102,7 +125,7 @@ export async function middleware(request: NextRequest) {
     }
   );
 
-  // 3. 公开路径直接放行（包括/admin，由/admin页面自己处理验证）
+  // 3. 公开路径直接放行
   if (isPublicPath(currentPath)) {
     console.log(`[中间件] 放行公开路径: ${currentPath}`);
     return response;
@@ -132,9 +155,7 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(redirectUrl);
       }
       
-      console.log(`[中间件] 用户已登录: ${user.email} (管理员: ${isAdminEmail(user.email)})`);
-      
-      // ⭐ 关键修改：不再对管理员进行特殊处理，一视同仁
+      console.log(`[中间件] 用户已登录: ${user.email}`);
       
       // 5.2 获取用户资料
       const { data: profile } = await supabase
@@ -157,7 +178,8 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/account-expired', request.url));
       }
       
-      // 5.4 多设备登录验证
+      // 5.4 多设备登录验证（暂时注释，先解决基础问题）
+      /*
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       if (!currentSession) {
         console.log(`[中间件] 会话不存在: ${user.id}`);
@@ -168,16 +190,11 @@ export async function middleware(request: NextRequest) {
       const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
       const tolerance = 3000; // 3秒容差
       
-      // ⭐ 关键修改：优化多设备检测逻辑
-      // 只有当确实有新的登录时（last_login_time > session_created_time）才触发
       if (lastLoginTime && sessionCreatedTime) {
         const timeDiff = lastLoginTime.getTime() - sessionCreatedTime.getTime();
         
         if (timeDiff > tolerance) {
           console.log(`[中间件] 检测到多设备登录: ${user.email}`);
-          console.log(`  - 会话创建时间: ${sessionCreatedTime.toISOString()}`);
-          console.log(`  - 最后登录时间: ${lastLoginTime.toISOString()}`);
-          console.log(`  - 时间差: ${timeDiff}ms`);
           
           // 清除会话cookie
           response.cookies.delete('sb-access-token');
@@ -193,6 +210,7 @@ export async function middleware(request: NextRequest) {
           return NextResponse.redirect(redirectUrl);
         }
       }
+      */
       
       console.log(`[中间件] 游戏路径验证通过: ${user.email}`);
       return response;
