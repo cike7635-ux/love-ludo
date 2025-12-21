@@ -1,10 +1,10 @@
-// /app/themes/page.tsx - 修改版本（添加删除按钮）
+// /app/themes/page.tsx - 修复版本
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from "next/link";
 import { listMyThemes } from "./actions";
-import { Plus, Layers, MoreVertical, Edit, Trash2 } from "lucide-react";
+import { Plus, Layers, Edit } from "lucide-react";
 import DeleteThemeButton from '@/app/components/themes/delete-theme-button';
 
 // 辅助函数：从JWT中解析创建时间（安全版本）
@@ -42,8 +42,94 @@ function getJwtCreationTime(jwt: string): Date | null {
 }
 
 export default async function ThemesPage() {
-  // ...（保持所有现有代码不变，直到获取主题数据部分）...
-
+  // 1. 创建Supabase客户端
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { 
+      cookies: { 
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch (error) {
+            console.error('设置cookie失败:', error);
+          }
+        }
+      }
+    }
+  );
+  
+  // 2. 检查用户登录状态
+  const { data: { user }, error: authError } = await supabase.auth.getUser();
+  if (authError || !user) {
+    redirect('/login');
+  }
+  
+  // 3. 获取当前会话
+  const { data: { session: currentSession } } = await supabase.auth.getSession();
+  if (!currentSession) {
+    await supabase.auth.signOut();
+    redirect('/login?error=no_session');
+  }
+  
+  // 4. 获取用户资料（包括会话信息和有效期）
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('account_expires_at, last_login_at, last_login_session')
+    .eq('id', user.id)
+    .single();
+  
+  if (!profile) {
+    redirect('/login?error=profile_not_found');
+  }
+  
+  // 5. 检查会员有效期
+  const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
+  if (isExpired) {
+    redirect('/account-expired');
+  }
+  
+  // ============ 【严格的多设备登录验证】 ============
+  // 从JWT中解析会话创建时间
+  const sessionCreatedTime = getJwtCreationTime(currentSession.access_token);
+  const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+  
+  // 添加3秒容差，避免由于时间同步或处理延迟导致的误判
+  const tolerance = 3000; // 3秒
+  
+  if (lastLoginTime && sessionCreatedTime) {
+    // 计算时间差（毫秒）
+    const timeDiff = lastLoginTime.getTime() - sessionCreatedTime.getTime();
+    
+    // 如果最后登录时间比会话创建时间晚（超过容差），说明有新登录
+    if (timeDiff > tolerance) {
+      console.log(`[主题页面] 检测到新登录，强制退出用户: ${user.email}`);
+      console.log(`  - JWT会话创建时间: ${sessionCreatedTime.toISOString()}`);
+      console.log(`  - 最后登录时间: ${lastLoginTime.toISOString()}`);
+      console.log(`  - 时间差: ${timeDiff}ms`);
+      
+      // 强制退出当前会话
+      await supabase.auth.signOut();
+      
+      // 重定向到专门的过期提示页面
+      const userEmail = user.email || '';
+      const lastLoginTimeStr = lastLoginTime.toISOString();
+      
+      redirect(`/login/expired?email=${encodeURIComponent(userEmail)}&last_login_time=${encodeURIComponent(lastLoginTimeStr)}`);
+    }
+  }
+  
+  // 6. 可选的：记录当前登录到日志（用于调试）
+  console.log(`[主题页面] 用户 ${user.email} 会话验证通过`);
+  console.log(`  - JWT会话创建时间: ${sessionCreatedTime ? sessionCreatedTime.toISOString() : '无法解析'}`);
+  console.log(`  - 最后登录时间: ${lastLoginTime ? lastLoginTime.toISOString() : '无记录'}`);
+  console.log(`  - 会话标识: ${profile.last_login_session || '无标识'}`);
+  // ============ 会话验证结束 ============
+  
   // 7. 原有的业务逻辑 - 获取主题数据
   const { data: themes } = await listMyThemes();
 
