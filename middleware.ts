@@ -1,19 +1,17 @@
-// /middleware.ts - 修复版本
+// /middleware.ts - 重新设计
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-// 辅助函数：从JWT中解析创建时间（Edge Runtime兼容版本）
+// 辅助函数：从JWT中解析创建时间
 function getJwtCreationTime(jwt: string): Date | null {
   try {
     const payloadBase64 = jwt.split('.')[1];
     if (!payloadBase64) return null;
     
-    // 处理Base64 URL编码
     const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
     const pad = base64.length % 4;
     const paddedBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
     
-    // Edge Runtime中没有Buffer，使用atob
     const payloadJson = decodeURIComponent(
       atob(paddedBase64)
         .split('')
@@ -23,7 +21,6 @@ function getJwtCreationTime(jwt: string): Date | null {
     
     const payload = JSON.parse(payloadJson);
     
-    // iat是签发时间（秒），需要转换为毫秒
     if (payload.iat) {
       return new Date(payload.iat * 1000);
     }
@@ -35,48 +32,30 @@ function getJwtCreationTime(jwt: string): Date | null {
   }
 }
 
-// 辅助函数：检查是否为管理员邮箱
+// 检查是否是管理员
 function isAdminEmail(email: string | undefined | null): boolean {
   if (!email) return false;
   
-  const adminEmails = process.env.ADMIN_EMAILS?.split(',') || [];
+  const adminEmails = process.env.ADMIN_EMAILS?.split(',') || ['2200691917@qq.com'];
   return adminEmails.some(adminEmail => 
     adminEmail.trim().toLowerCase() === email.toLowerCase()
   );
 }
 
-export async function middleware(request: NextRequest) {
-  // 创建响应对象
-  let response = NextResponse.next();
-  
-  // 1. 创建对中间件友好的Supabase客户端
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => {
-          // 从请求中获取cookie
-          const cookies: { name: string; value: string }[] = [];
-          request.cookies.getAll().forEach(cookie => {
-            cookies.push({ name: cookie.name, value: cookie.value });
-          });
-          return cookies;
-        },
-        setAll: (cookiesToSet) => {
-          // 设置到响应中
-          cookiesToSet.forEach(({ name, value, options }) => {
-            response.cookies.set(name, value, options);
-          });
-        },
-      },
-    }
-  );
+// 检查是否受保护的游戏路径
+function isProtectedGamePath(path: string): boolean {
+  const protectedPaths = [
+    '/lobby',
+    '/game',
+    '/profile',
+    '/themes',
+    '/game-history',
+  ];
+  return protectedPaths.some(p => path.startsWith(p));
+}
 
-  const currentPath = request.nextUrl.pathname;
-  console.log(`[中间件] 请求路径: ${currentPath}`);
-  
-  // 2. 定义路径规则
+// 检查是否公开路径
+function isPublicPath(path: string): boolean {
   const publicPaths = [
     '/',
     '/login',
@@ -86,144 +65,116 @@ export async function middleware(request: NextRequest) {
     '/auth/error',
     '/account-expired',
     '/renew',
-    '/api/auth/signup-with-key',
-    '/api/auth/renew-account',
   ];
+  return publicPaths.some(p => path.startsWith(p));
+}
+
+export async function middleware(request: NextRequest) {
+  const currentPath = request.nextUrl.pathname;
+  console.log(`[中间件] 请求路径: ${currentPath}`);
   
-  const protectedPaths = [
-    '/lobby',
-    '/game',
-    '/profile',
-    '/themes',
-    '/game-history',
-  ];
+  // 1. 创建响应对象
+  const response = NextResponse.next();
   
-  // 3. 判断当前请求路径
-  const isPublicPath = publicPaths.some(path => currentPath.startsWith(path));
-  const isProtectedPath = protectedPaths.some(path => currentPath.startsWith(path));
-  const isApiPath = currentPath.startsWith('/api/');
-  const isAdminPath = currentPath.startsWith('/admin');
-  
-  // 4. 公开路径直接放行
-  if (isPublicPath && !isApiPath) {
-    return response;
-  }
-  
-  // 5. 管理员路径特殊处理（不进行多设备和会员过期验证）
-  if (isAdminPath) {
-    console.log(`[中间件] 处理管理员路径: ${currentPath}`);
+  // 2. 创建Supabase客户端 - 使用PUBLISHABLE_KEY（重要！）
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, // 这里改成了PUBLISHABLE_KEY
+    {
+      cookies: {
+        getAll: () => {
+          const cookies: { name: string; value: string }[] = [];
+          request.cookies.getAll().forEach(cookie => {
+            cookies.push({ name: cookie.name, value: cookie.value });
+          });
+          return cookies;
+        },
+        setAll: (cookiesToSet) => {
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    }
+  );
+
+  // 3. 处理管理员路径（最高优先级）
+  if (currentPath.startsWith('/admin')) {
+    console.log(`[中间件] 管理员路径处理: ${currentPath}`);
     
+    // 管理员登录页面直接放行
+    if (currentPath === '/admin' || currentPath === '/admin/login') {
+      console.log(`[中间件] 放行管理员登录页面: ${currentPath}`);
+      return response;
+    }
+    
+    // 其他管理员页面需要验证
     try {
-      // 5.1 检查用户是否登录
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      const { data: { user }, error } = await supabase.auth.getUser();
       
-      if (authError || !user) {
-        console.log(`[中间件] 管理员路径未登录，允许访问登录页: ${currentPath}`);
-        
-        // 如果已经是/admin，直接放行显示登录页
-        if (currentPath === '/admin' || currentPath === '/admin/') {
-          return response;
-        }
-        
-        // 如果是/admin/login，重定向到/admin
-        if (currentPath === '/admin/login') {
-          return NextResponse.redirect(new URL('/admin', request.url));
-        }
-        
-        // 其他管理员路径未登录，重定向到管理员登录页
-        console.log(`[中间件] 访问管理员页面未登录，重定向到/admin: ${currentPath}`);
+      if (error || !user) {
+        console.log(`[中间件] 管理员页面未登录，重定向到/admin`);
         return NextResponse.redirect(new URL('/admin', request.url));
       }
       
-      // 5.2 检查是否是管理员
-      const admin = isAdminEmail(user.email);
-      
-      if (!admin) {
-        console.log(`[中间件] 非管理员尝试访问后台: ${user.email}`);
-        
-        // 如果是非管理员访问/admin，显示无权限页面
-        if (currentPath === '/admin' || currentPath === '/admin/') {
-          return response; // 允许访问/admin，会显示无权限页
-        }
-        
-        // 其他管理员路径，重定向到无权限页
+      // 检查是否是管理员
+      if (!isAdminEmail(user.email)) {
+        console.log(`[中间件] 非管理员访问后台: ${user.email}`);
         return NextResponse.redirect(new URL('/admin/unauthorized', request.url));
       }
       
-      // 5.3 管理员验证通过
       console.log(`[中间件] 管理员验证通过: ${user.email}`);
-      
-      // 如果是访问/admin，重定向到仪表板
-      if (currentPath === '/admin' || currentPath === '/admin/') {
-        return NextResponse.redirect(new URL('/admin/dashboard', request.url));
-      }
-      
-      // 其他管理员页面，直接放行
-      // 管理员跳过会员过期和多设备验证
-      response.headers.set('x-user-id', user.id);
-      response.headers.set('x-user-email', user.email || '');
-      response.headers.set('x-user-role', 'admin');
-      
       return response;
       
     } catch (error) {
-      console.error('[中间件] 管理员验证过程中发生错误:', error);
-      // 发生错误时，允许访问/admin显示错误页
-      return response;
+      console.error(`[中间件] 管理员验证错误:`, error);
+      return NextResponse.redirect(new URL('/admin', request.url));
     }
   }
   
-  // 6. 对于受保护路径和受保护API，进行完整验证
-  if (isProtectedPath || (isApiPath && !currentPath.includes('/auth/'))) {
+  // 4. 公开路径直接放行
+  if (isPublicPath(currentPath)) {
+    console.log(`[中间件] 放行公开路径: ${currentPath}`);
+    return response;
+  }
+  
+  // 5. API路径处理
+  if (currentPath.startsWith('/api/')) {
+    // API认证逻辑（如果有的话）
+    console.log(`[中间件] API路径: ${currentPath}`);
+    return response;
+  }
+  
+  // 6. 受保护的游戏路径（需要完整验证）
+  if (isProtectedGamePath(currentPath)) {
+    console.log(`[中间件] 游戏路径验证: ${currentPath}`);
+    
     try {
-      console.log(`[中间件] 处理游戏路径: ${currentPath}`);
-      
       // 6.1 检查用户是否登录
       const { data: { user }, error: authError } = await supabase.auth.getUser();
       
       if (authError || !user) {
-        console.log(`[中间件] 用户未登录，重定向到登录页: ${currentPath}`);
+        console.log(`[中间件] 游戏路径未登录，重定向到/login`);
+        
+        // 创建重定向URL
         const redirectUrl = new URL('/login', request.url);
-        redirectUrl.searchParams.set('redirectedFrom', currentPath);
+        
+        // 如果是/lobby，添加redirect参数
+        if (currentPath === '/lobby') {
+          redirectUrl.searchParams.set('redirect', '/lobby');
+        }
+        
         return NextResponse.redirect(redirectUrl);
       }
       
       console.log(`[中间件] 用户已登录: ${user.email}`);
       
-      // 6.2 检查是否是管理员用户（管理员玩游戏的场景）
-      const admin = isAdminEmail(user.email);
+      // 6.2 检查是否是管理员（管理员玩游戏的场景）
+      const isAdmin = isAdminEmail(user.email);
       
-      if (admin) {
-        console.log(`[中间件] 管理员玩游戏，跳过部分验证: ${user.email}`);
-        
-        // 管理员玩游戏，只检查会员过期，跳过多设备验证
-        const { data: profile } = await supabase
-          .from('profiles')
-          .select('account_expires_at, last_login_at, last_login_session')
-          .eq('id', user.id)
-          .single();
-        
-        if (!profile) {
-          console.log(`[中间件] 管理员资料不存在: ${user.id}`);
-          return NextResponse.redirect(new URL('/login?error=profile_not_found', request.url));
-        }
-        
-        // 检查会员有效期（管理员也需要检查）
-        const isExpired = !profile?.account_expires_at || 
-                         new Date(profile.account_expires_at) < new Date();
-        
-        if (isExpired && currentPath !== '/account-expired') {
-          console.log(`[中间件] 管理员 ${user.email} 会员已过期，重定向`);
-          return NextResponse.redirect(new URL('/account-expired', request.url));
-        }
-        
-        // 管理员跳过 5.4 的多设备验证
-        
-        // 验证通过
-        response.headers.set('x-user-id', user.id);
-        response.headers.set('x-user-email', user.email || '');
-        response.headers.set('x-user-role', 'admin-playing');
-        
+      if (isAdmin) {
+        console.log(`[中间件] 管理员玩游戏，跳过复杂验证: ${user.email}`);
+        // 管理员跳过会员过期和多设备验证
         return response;
       }
       
@@ -244,11 +195,11 @@ export async function middleware(request: NextRequest) {
                        new Date(profile.account_expires_at) < new Date();
       
       if (isExpired && currentPath !== '/account-expired') {
-        console.log(`[中间件] 用户 ${user.email} 会员已过期，重定向`);
+        console.log(`[中间件] 用户会员已过期: ${user.email}`);
         return NextResponse.redirect(new URL('/account-expired', request.url));
       }
       
-      // 6.5 多设备登录验证（普通用户）
+      // 6.5 多设备登录验证
       const { data: { session: currentSession } } = await supabase.auth.getSession();
       if (!currentSession) {
         console.log(`[中间件] 会话不存在: ${user.id}`);
@@ -264,9 +215,6 @@ export async function middleware(request: NextRequest) {
         
         if (timeDiff > tolerance) {
           console.log(`[中间件] 检测到多设备登录: ${user.email}`);
-          console.log(`  - JWT时间: ${sessionCreatedTime.toISOString()}`);
-          console.log(`  - 最后登录: ${lastLoginTime.toISOString()}`);
-          console.log(`  - 时间差: ${timeDiff}ms`);
           
           // 清除会话cookie
           response.cookies.delete('sb-access-token');
@@ -283,29 +231,22 @@ export async function middleware(request: NextRequest) {
         }
       }
       
-      // 6.6 验证通过，继续请求
-      response.headers.set('x-user-id', user.id);
-      response.headers.set('x-user-email', user.email || '');
-      response.headers.set('x-user-role', 'user');
-      
+      console.log(`[中间件] 游戏路径验证通过: ${user.email}`);
       return response;
       
     } catch (error) {
-      console.error('[中间件] 验证过程中发生错误:', error);
-      // 发生错误时，保守起见重定向到登录页
+      console.error(`[中间件] 游戏路径验证错误:`, error);
       return NextResponse.redirect(new URL('/login?error=auth_failed', request.url));
     }
   }
   
-  // 7. 其他路径（如公开API、静态资源等）直接放行
+  // 7. 其他路径直接放行
+  console.log(`[中间件] 放行其他路径: ${currentPath}`);
   return response;
 }
 
-// 8. 配置中间件生效的路径
 export const config = {
   matcher: [
-    // 匹配所有路径，排除_next等内部路径
-    // 注意：admin路径也在匹配范围内，因为我们有特殊处理
     '/((?!_next/static|_next/image|favicon.ico|public/).*)',
   ],
 };
