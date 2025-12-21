@@ -1,4 +1,4 @@
-// /middleware.ts - 重新设计
+// /middleware.ts - 修复版本
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -65,6 +65,8 @@ function isPublicPath(path: string): boolean {
     '/auth/error',
     '/account-expired',
     '/renew',
+    '/api/auth/signup-with-key',
+    '/api/auth/renew-account',
   ];
   return publicPaths.some(p => path.startsWith(p));
 }
@@ -76,10 +78,11 @@ export async function middleware(request: NextRequest) {
   // 1. 创建响应对象
   const response = NextResponse.next();
   
-  // 2. 创建Supabase客户端 - 使用PUBLISHABLE_KEY（重要！）
+  // 2. 创建Supabase客户端 - 修复：根据你的环境变量选择正确的key
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!, // 这里改成了PUBLISHABLE_KEY
+    // 优先使用 PUBLISHABLE_KEY，如果没有则使用 ANON_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY! || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
         getAll: () => {
@@ -156,13 +159,9 @@ export async function middleware(request: NextRequest) {
       if (authError || !user) {
         console.log(`[中间件] 游戏路径未登录，重定向到/login`);
         
-        // 创建重定向URL
+        // 创建重定向URL - 修复：总是添加redirect参数
         const redirectUrl = new URL('/login', request.url);
-        
-        // 如果是/lobby，添加redirect参数
-        if (currentPath === '/lobby') {
-          redirectUrl.searchParams.set('redirect', '/lobby');
-        }
+        redirectUrl.searchParams.set('redirect', currentPath);
         
         return NextResponse.redirect(redirectUrl);
       }
