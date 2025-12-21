@@ -1,11 +1,11 @@
-// /middleware.ts - 改进的多设备检测版本
+// /middleware.ts - 完整版本
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
-// ==================== 工具函数 ====================
+// ==================== 配置与工具函数 ====================
 
 /**
- * 检查是否是管理员邮箱（仅用于日志记录）
+ * 检查是否是管理员邮箱
  */
 function isAdminEmail(email: string | undefined | null): boolean {
   if (!email) return false;
@@ -20,59 +20,57 @@ function isAdminEmail(email: string | undefined | null): boolean {
  * 检查是否受保护的游戏路径
  */
 function isProtectedGamePath(path: string): boolean {
-  const protectedPaths = [
+  // 精确匹配的路径
+  const exactPaths = [
     '/lobby',
     '/game',
-    '/profile',
+    '/profile', 
     '/themes',
     '/game-history',
   ];
   
-  // 精确匹配
-  if (protectedPaths.includes(path)) {
+  if (exactPaths.includes(path)) {
     return true;
   }
   
-  // 前缀匹配（例如 /themes/123）
-  return protectedPaths.some(p => path.startsWith(p + '/'));
+  // 前缀匹配的路径（如 /themes/123）
+  const prefixPaths = [
+    '/game/',
+    '/themes/',
+  ];
+  
+  return prefixPaths.some(prefix => path.startsWith(prefix));
 }
 
 /**
- * 检查是否公开路径（不需要任何认证）
+ * 检查是否公开路径（不需要认证）
  */
 function isPublicPath(path: string): boolean {
   // 精确匹配的公开路径
   const exactPublicPaths = [
     '/',
     '/login',
-    '/account-expired',
+    '/account-expired', 
     '/renew',
     '/admin',
     '/admin/unauthorized',
     '/login/expired',
   ];
   
-  // 前缀匹配的公开路径（但排除游戏路径）
+  if (exactPublicPaths.includes(path)) {
+    return true;
+  }
+  
+  // 前缀匹配的公开路径
   const prefixPublicPaths = [
     '/auth/',
     '/api/auth/',
   ];
   
-  // 1. 精确匹配
-  if (exactPublicPaths.includes(path)) {
-    return true;
-  }
-  
-  // 2. 前缀匹配
   for (const prefix of prefixPublicPaths) {
     if (path.startsWith(prefix)) {
       return true;
     }
-  }
-  
-  // 3. 特殊处理：/login 的子路径（除了已经定义的）
-  if (path.startsWith('/login/') && path !== '/login/expired') {
-    return true;
   }
   
   return false;
@@ -82,13 +80,14 @@ function isPublicPath(path: string): boolean {
 
 export async function middleware(request: NextRequest) {
   const currentPath = request.nextUrl.pathname;
-  const startTime = Date.now();
-  
-  // 1. 创建响应对象
-  const response = NextResponse.next();
+  const requestId = Math.random().toString(36).substring(7);
+  console.log(`[${requestId}] 中间件开始: ${currentPath}`);
   
   try {
-    // 2. 创建Supabase客户端
+    // 创建响应对象
+    const response = NextResponse.next();
+    
+    // 创建Supabase客户端
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY! || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -112,81 +111,73 @@ export async function middleware(request: NextRequest) {
 
     // ============ 路径分类处理 ============
     
-    // 3.1 公开路径直接放行
+    // 1. 公开路径直接放行
     if (isPublicPath(currentPath)) {
-      const elapsedTime = Date.now() - startTime;
-      console.log(`[中间件] 公开路径: ${currentPath} (${elapsedTime}ms)`);
+      console.log(`[${requestId}] 公开路径，直接放行`);
       return response;
     }
     
-    // 3.2 API路径处理
+    // 2. API路径处理
     if (currentPath.startsWith('/api/')) {
-      const elapsedTime = Date.now() - startTime;
-      console.log(`[中间件] API路径: ${currentPath} (${elapsedTime}ms)`);
+      console.log(`[${requestId}] API路径，放行`);
       return response;
     }
     
-    // 3.3 管理员路径处理（独立验证）
+    // 3. 管理员路径处理（独立验证）
     if (currentPath.startsWith('/admin')) {
+      console.log(`[${requestId}] 管理员路径处理`);
+      
       // 管理员登录页面直接放行
       if (currentPath === '/admin' || currentPath === '/admin/login') {
-        const elapsedTime = Date.now() - startTime;
-        console.log(`[中间件] 管理员登录页: ${currentPath} (${elapsedTime}ms)`);
+        console.log(`[${requestId}] 管理员登录页，放行`);
         return response;
       }
       
       // 其他管理员页面需要验证管理员密钥
       const adminKeyVerified = request.cookies.get('admin_key_verified');
       if (!adminKeyVerified || adminKeyVerified.value !== 'true') {
-        console.log(`[中间件] 管理员未通过密钥验证，重定向到管理员登录页`);
+        console.log(`[${requestId}] 管理员未通过密钥验证`);
         
         const redirectUrl = new URL('/admin', request.url);
         redirectUrl.searchParams.set('redirect', currentPath);
         return NextResponse.redirect(redirectUrl);
       }
       
-      // 验证管理员身份
-      try {
-        const { data: { user }, error } = await supabase.auth.getUser();
-        
-        if (error || !user) {
-          console.log(`[中间件] 管理员验证失败，用户未登录`);
-          return NextResponse.redirect(new URL('/admin', request.url));
-        }
-        
-        // 检查是否是管理员邮箱
-        if (!isAdminEmail(user.email)) {
-          console.log(`[中间件] 非管理员访问后台: ${user.email}`);
-          return NextResponse.redirect(new URL('/admin/unauthorized', request.url));
-        }
-        
-        const elapsedTime = Date.now() - startTime;
-        console.log(`[中间件] 管理员验证通过: ${user.email} (${elapsedTime}ms)`);
-        return response;
-      } catch (adminError) {
-        console.error(`[中间件] 管理员验证错误:`, adminError);
+      // 验证管理员登录状态
+      const { data: { user }, error } = await supabase.auth.getUser();
+      
+      if (error || !user) {
+        console.log(`[${requestId}] 管理员未登录`);
         return NextResponse.redirect(new URL('/admin', request.url));
       }
+      
+      // 验证管理员邮箱
+      if (!isAdminEmail(user.email)) {
+        console.log(`[${requestId}] 非管理员访问后台: ${user.email}`);
+        return NextResponse.redirect(new URL('/admin/unauthorized', request.url));
+      }
+      
+      console.log(`[${requestId}] 管理员验证通过: ${user.email}`);
+      return response;
     }
     
-    // 3.4 受保护的游戏路径（完整验证）
+    // 4. 受保护的游戏路径（完整验证）
     if (isProtectedGamePath(currentPath)) {
-      console.log(`[中间件] 开始验证游戏路径: ${currentPath}`);
+      console.log(`[${requestId}] 游戏路径验证开始`);
       
       try {
         // ============ 基础登录验证 ============
         const { data: { user }, error: authError } = await supabase.auth.getUser();
         
         if (authError || !user) {
-          const elapsedTime = Date.now() - startTime;
-          console.log(`[中间件] 未登录，重定向到登录页 (${elapsedTime}ms)`);
+          console.log(`[${requestId}] 用户未登录`);
           
           const redirectUrl = new URL('/login', request.url);
           redirectUrl.searchParams.set('redirect', currentPath);
           return NextResponse.redirect(redirectUrl);
         }
         
-        console.log(`[中间件] 用户已登录: ${user.email} (管理员: ${isAdminEmail(user.email)})`);
+        console.log(`[${requestId}] 用户已登录: ${user.email}`);
         
         // ============ 获取用户资料 ============
         let profile = null;
@@ -198,23 +189,19 @@ export async function middleware(request: NextRequest) {
             .single();
           
           if (profileError) {
-            console.warn(`[中间件] 查询用户资料失败: ${profileError.message}`);
-            
-            // 关键修复：如果profiles记录不存在，允许继续访问
-            const elapsedTime = Date.now() - startTime;
-            console.log(`[中间件] Profiles记录缺失，允许继续访问 (${elapsedTime}ms)`);
+            console.warn(`[${requestId}] 查询用户资料失败: ${profileError.message}`);
+            // 资料不存在时允许继续，避免循环重定向
             return response;
           }
           
           profile = data;
         } catch (profileError) {
-          console.error(`[中间件] 获取用户资料异常:`, profileError);
-          // 发生异常时也允许继续访问，避免循环
+          console.error(`[${requestId}] 获取用户资料异常:`, profileError);
           return response;
         }
         
         if (!profile) {
-          console.log(`[中间件] 用户profiles记录不存在，允许继续: ${user.id}`);
+          console.log(`[${requestId}] 用户资料不存在`);
           return response;
         }
         
@@ -224,88 +211,101 @@ export async function middleware(request: NextRequest) {
                          new Date(profile.account_expires_at) < now;
         
         if (isExpired && currentPath !== '/account-expired') {
-          const elapsedTime = Date.now() - startTime;
-          console.log(`[中间件] 会员已过期，重定向到过期页 (${elapsedTime}ms)`);
-          console.log(`  - 过期时间: ${profile.account_expires_at}`);
-          console.log(`  - 当前时间: ${now.toISOString()}`);
-          
+          console.log(`[${requestId}] 会员已过期: ${profile.account_expires_at}`);
           return NextResponse.redirect(new URL('/account-expired', request.url));
         }
         
-        // ============ 简化的多设备登录验证（基于会话标识） ============
+        // ============ 优化的多设备登录验证 ============
         try {
-          // 获取当前会话
+          // 获取当前会话信息
           const { data: { session: currentSession } } = await supabase.auth.getSession();
           
           if (!currentSession) {
-            console.warn(`[中间件] 当前会话不存在`);
-            // 会话不存在，让用户重新登录
+            console.warn(`[${requestId}] 当前会话不存在`);
             const redirectUrl = new URL('/login', request.url);
             redirectUrl.searchParams.set('redirect', currentPath);
             return NextResponse.redirect(redirectUrl);
           }
           
-          // 生成当前会话的标识符
-          const currentSessionId = `session_${currentSession.user.id}_${currentSession.access_token.substring(0, 20)}`;
+          // 生成当前会话标识
+          const currentSessionId = `sess_${currentSession.user.id}_${currentSession.access_token.substring(0, 12)}`;
           
-          // 如果用户没有last_login_session，说明是首次登录或旧的会话
-          if (!profile.last_login_session) {
-            console.log(`[中间件] 首次登录或旧的会话，更新会话标识`);
+          // 只有数据库中存在会话标识时才进行比对
+          if (profile.last_login_session) {
+            console.log(`[${requestId}] 会话标识检查:`, {
+              stored: profile.last_login_session.substring(0, 20),
+              current: currentSessionId.substring(0, 20),
+              match: profile.last_login_session === currentSessionId
+            });
             
-            // 更新会话标识
+            // 只在标识符明确不匹配时才视为多设备登录
+            if (profile.last_login_session !== currentSessionId) {
+              console.log(`[${requestId}] 检测到会话标识不匹配`);
+              
+              // 额外检查：是否是刚登录的情况（最后登录时间很近）
+              const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+              const now = new Date();
+              const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
+              
+              // 如果最后登录发生在最近30秒内，可能是正常登录过程，不强制退出
+              if (timeSinceLastLogin < 30000) {
+                console.log(`[${requestId}] 最后登录发生在 ${timeSinceLastLogin}ms 前，认为是正常登录，跳过多设备检查`);
+              } else {
+                console.log(`[${requestId}] 判定为多设备登录，强制退出`);
+                
+                // 清除会话cookie
+                response.cookies.delete('sb-access-token');
+                response.cookies.delete('sb-refresh-token');
+                
+                // 重定向到过期页面
+                const redirectUrl = new URL('/login/expired', request.url);
+                redirectUrl.searchParams.set('email', user.email || '');
+                redirectUrl.searchParams.set('reason', 'multi_device');
+                if (lastLoginTime) {
+                  redirectUrl.searchParams.set('last_login_time', lastLoginTime.toISOString());
+                }
+                
+                return NextResponse.redirect(redirectUrl);
+              }
+            }
+          } else {
+            // 数据库中无会话标识，说明是首次或重置后登录
+            console.log(`[${requestId}] 无历史会话标识，初始化新的会话`);
+          }
+          
+          // ============ 更新会话信息 ============
+          // 只有在会话验证通过后才更新
+          try {
+            const newSessionId = `sess_${currentSession.user.id}_${currentSession.access_token.substring(0, 12)}`;
             await supabase
               .from('profiles')
               .update({ 
-                last_login_session: currentSessionId,
-                last_login_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
+                last_login_at: now.toISOString(),
+                last_login_session: newSessionId,
+                updated_at: now.toISOString()
               })
               .eq('id', user.id);
-            
-          } else if (profile.last_login_session !== currentSessionId) {
-            // 如果会话标识不匹配，说明是新设备登录
-            console.log(`[中间件] 检测到新设备登录: ${user.email}`);
-            console.log(`  - 存储的会话标识: ${profile.last_login_session}`);
-            console.log(`  - 当前会话标识: ${currentSessionId}`);
-            
-            // 清除会话cookie
-            response.cookies.delete('sb-access-token');
-            response.cookies.delete('sb-refresh-token');
-            
-            // 重定向到过期页面
-            const redirectUrl = new URL('/login/expired', request.url);
-            redirectUrl.searchParams.set('email', user.email || '');
-            redirectUrl.searchParams.set('reason', 'new_device_login');
-            
-            const elapsedTime = Date.now() - startTime;
-            console.log(`[中间件] 重定向到过期页面 (${elapsedTime}ms)`);
-            
-            return NextResponse.redirect(redirectUrl);
-          } else {
-            // 会话匹配，正常访问
-            console.log(`[中间件] 会话验证通过: ${currentSessionId.substring(0, 20)}...`);
+              
+            console.log(`[${requestId}] 已更新会话信息`);
+          } catch (updateError) {
+            console.warn(`[${requestId}] 更新会话信息失败:`, updateError);
           }
           
-        } catch (multiDeviceError) {
-          console.error(`[中间件] 会话验证错误:`, multiDeviceError);
-          // 验证出错时，不阻止用户访问，仅记录日志
+        } catch (sessionError) {
+          console.error(`[${requestId}] 会话验证错误:`, sessionError);
         }
         
-        const elapsedTime = Date.now() - startTime;
-        console.log(`[中间件] 验证全部通过: ${user.email} (${elapsedTime}ms)`);
-        console.log(`  - 会员过期时间: ${profile.account_expires_at}`);
-        
+        console.log(`[${requestId}] 游戏路径验证通过`);
         return response;
         
       } catch (gamePathError) {
-        console.error(`[中间件] 游戏路径验证异常:`, gamePathError);
+        console.error(`[${requestId}] 游戏路径验证异常:`, gamePathError);
         return NextResponse.redirect(new URL('/login', request.url));
       }
     }
     
-    // 4. 其他未分类路径直接放行
-    const elapsedTime = Date.now() - startTime;
-    console.log(`[中间件] 其他路径: ${currentPath} (${elapsedTime}ms)`);
+    // 5. 其他未分类路径
+    console.log(`[${requestId}] 其他路径，放行`);
     return response;
     
   } catch (globalError) {
@@ -313,6 +313,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url));
   }
 }
+
+// ==================== 中间件配置 ====================
 
 export const config = {
   matcher: [
