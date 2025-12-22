@@ -229,108 +229,125 @@ export async function middleware(request: NextRequest) {
           return NextResponse.redirect(new URL('/account-expired', request.url));
         }
         
-        // ============ 优化的多设备登录验证 ============
-        try {
-          // 获取当前会话信息
-          const { data: { session: currentSession } } = await supabase.auth.getSession();
-          
-          if (!currentSession) {
-            console.warn(`[${requestId}] 当前会话不存在`);
-            const redirectUrl = new URL('/login', request.url);
-            redirectUrl.searchParams.set('redirect', currentPath);
-            return NextResponse.redirect(redirectUrl);
-          }
-          
-          // 生成当前会话标识
-          const currentSessionId = `sess_${currentSession.user.id}_${currentSession.access_token.substring(0, 12)}`;
-          
-          // 🔥 关键修复：更智能的多设备检测逻辑
-          if (profile.last_login_session) {
-            // 情况1：会话完全匹配 - 正常访问
-            if (profile.last_login_session === currentSessionId) {
-              console.log(`[${requestId}] 会话标识匹配，正常访问`);
-            }
-            // 情况2：会话部分匹配（同一用户但不同token）- 可能是token刷新
-            else if (profile.last_login_session.startsWith(`sess_${currentSession.user.id}_`)) {
-              console.log(`[${requestId}] 同一用户不同token，可能是token刷新`);
-              
-              // 检查最后登录时间
-              const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
-              const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
-              
-              // 如果是在10秒内，认为是token刷新，更新会话标识
-              if (timeSinceLastLogin < 10000) { // 10秒
-                console.log(`[${requestId}] token刷新，更新会话标识`);
-                await supabase
-                  .from('profiles')
-                  .update({ 
-                    last_login_session: currentSessionId,
-                    updated_at: now.toISOString()
-                  })
-                  .eq('id', user.id);
-              } else {
-                // 超过10秒，认为是多设备登录
-                console.log(`[${requestId}] 检测到多设备登录，强制退出`);
-                
-                // 🔥 关键修复：不删除Cookie，只重定向到过期页面
-                // Cookie删除由前端页面处理
-                const redirectUrl = new URL('/login/expired', request.url);
-                redirectUrl.searchParams.set('email', user.email || '');
-                redirectUrl.searchParams.set('reason', 'multi_device');
-                redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
-                if (lastLoginTime) {
-                  redirectUrl.searchParams.set('last_login_time', lastLoginTime.toISOString());
-                }
-                
-                return NextResponse.redirect(redirectUrl);
-              }
-            }
-            // 情况3：完全不同 - 多设备登录
-            else {
-              console.log(`[${requestId}] 检测到完全不同的会话标识，判定为多设备登录`);
-              
-              // 检查用户创建时间，如果是新用户（24小时内），宽松处理
-              const userCreatedAt = profile.created_at ? new Date(profile.created_at) : null;
-              const timeSinceCreation = userCreatedAt ? now.getTime() - userCreatedAt.getTime() : 0;
-              
-              if (timeSinceCreation < 24 * 60 * 60 * 1000) { // 24小时内
-                console.log(`[${requestId}] 新用户（24小时内），更新会话标识`);
-                await supabase
-                  .from('profiles')
-                  .update({ 
-                    last_login_session: currentSessionId,
-                    last_login_at: now.toISOString(),
-                    updated_at: now.toISOString()
-                  })
-                  .eq('id', user.id);
-              } else {
-                console.log(`[${requestId}] 老用户多设备登录，强制退出`);
-                
-                const redirectUrl = new URL('/login/expired', request.url);
-                redirectUrl.searchParams.set('email', user.email || '');
-                redirectUrl.searchParams.set('reason', 'multi_device_different_user');
-                redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
-                
-                return NextResponse.redirect(redirectUrl);
-              }
-            }
-          } else {
-            // 数据库中无会话标识，初始化新的会话
-            console.log(`[${requestId}] 初始化新的会话标识`);
-            await supabase
-              .from('profiles')
-              .update({ 
-                last_login_at: now.toISOString(),
-                last_login_session: currentSessionId,
-                updated_at: now.toISOString()
-              })
-              .eq('id', user.id);
-          }
-          
-        } catch (sessionError) {
-          console.error(`[${requestId}] 会话验证错误:`, sessionError);
-          // 出错时不中断用户访问
+      // ============ 优化的多设备登录验证 ============
+try {
+  // 获取当前会话信息
+  const { data: { session: currentSession } } = await supabase.auth.getSession();
+  
+  if (!currentSession) {
+    console.warn(`[${requestId}] 当前会话不存在`);
+    const redirectUrl = new URL('/login', request.url);
+    redirectUrl.searchParams.set('redirect', currentPath);
+    return NextResponse.redirect(redirectUrl);
+  }
+  
+  // 生成当前会话标识
+  const currentSessionId = `sess_${currentSession.user.id}_${currentSession.access_token.substring(0, 12)}`;
+  
+  // 🔥 🔥 🔥 关键修复：添加登录宽限期检测（放在所有检测之前）
+  const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+  const now = new Date();
+  const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
+  
+  // 为刚登录的用户提供2分钟宽限期，避免时序问题导致的多设备误判
+  if (timeSinceLastLogin < 120000) { // 2分钟（120000毫秒）
+    console.log(`[${requestId}] 用户刚登录（${Math.round(timeSinceLastLogin/1000)}秒前），处于宽限期内`);
+    
+    // 确保会话标识是最新的
+    await supabase
+      .from('profiles')
+      .update({ 
+        last_login_session: currentSessionId,
+        updated_at: now.toISOString()
+      })
+      .eq('id', user.id);
+      
+    console.log(`[${requestId}] 宽限期内会话标识已更新，正常放行`);
+    // 继续执行后续代码，这样其他验证（如会员过期）仍然会执行
+  }
+  // 🔥 🔥 🔥 宽限期结束
+  
+  // 🔥 关键修复：更智能的多设备检测逻辑
+  if (profile.last_login_session) {
+    // 情况1：会话完全匹配 - 正常访问
+    if (profile.last_login_session === currentSessionId) {
+      console.log(`[${requestId}] 会话标识匹配，正常访问`);
+    }
+    // 情况2：会话部分匹配（同一用户但不同token）- 可能是token刷新
+    else if (profile.last_login_session.startsWith(`sess_${currentSession.user.id}_`)) {
+      console.log(`[${requestId}] 同一用户不同token，可能是token刷新`);
+      
+      // 如果是在30秒内，认为是token刷新，更新会话标识
+      if (timeSinceLastLogin < 30000) { // 30秒（比宽限期短）
+        console.log(`[${requestId}] token刷新，更新会话标识`);
+        await supabase
+          .from('profiles')
+          .update({ 
+            last_login_session: currentSessionId,
+            updated_at: now.toISOString()
+          })
+          .eq('id', user.id);
+      } else {
+        // 超过30秒，认为是多设备登录
+        console.log(`[${requestId}] 检测到多设备登录，强制退出`);
+        
+        const redirectUrl = new URL('/login/expired', request.url);
+        redirectUrl.searchParams.set('email', user.email || '');
+        redirectUrl.searchParams.set('reason', 'multi_device');
+        redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
+        if (lastLoginTime) {
+          redirectUrl.searchParams.set('last_login_time', lastLoginTime.toISOString());
         }
+        
+        return NextResponse.redirect(redirectUrl);
+      }
+    }
+    // 情况3：完全不同 - 多设备登录
+    else {
+      console.log(`[${requestId}] 检测到完全不同的会话标识，判定为多设备登录`);
+      
+      // 检查用户创建时间，如果是新用户（24小时内），宽松处理
+      const userCreatedAt = profile.created_at ? new Date(profile.created_at) : null;
+      const timeSinceCreation = userCreatedAt ? now.getTime() - userCreatedAt.getTime() : 0;
+      
+      if (timeSinceCreation < 24 * 60 * 60 * 1000) { // 24小时内
+        console.log(`[${requestId}] 新用户（24小时内），更新会话标识`);
+        await supabase
+          .from('profiles')
+          .update({ 
+            last_login_session: currentSessionId,
+            last_login_at: now.toISOString(),
+            updated_at: now.toISOString()
+          })
+          .eq('id', user.id);
+      } else {
+        console.log(`[${requestId}] 老用户多设备登录，强制退出`);
+        
+        const redirectUrl = new URL('/login/expired', request.url);
+        redirectUrl.searchParams.set('email', user.email || '');
+        redirectUrl.searchParams.set('reason', 'multi_device_different_user');
+        redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
+        
+        return NextResponse.redirect(redirectUrl);
+      }
+    }
+  } else {
+    // 数据库中无会话标识，初始化新的会话
+    console.log(`[${requestId}] 初始化新的会话标识`);
+    await supabase
+      .from('profiles')
+      .update({ 
+        last_login_at: now.toISOString(),
+        last_login_session: currentSessionId,
+        updated_at: now.toISOString()
+      })
+      .eq('id', user.id);
+  }
+  
+} catch (sessionError) {
+  console.error(`[${requestId}] 会话验证错误:`, sessionError);
+  // 出错时不中断用户访问
+}
         
         console.log(`[${requestId}] 游戏路径验证通过`);
         
