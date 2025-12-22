@@ -63,9 +63,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `注册失败: ${authError?.message}` }, { status: 400 });
     }
 
-    // 4. 立即尝试自动登录
+    // 4. 立即尝试自动登录（仍然尝试，但不依赖）
     console.log('[API] 尝试自动登录...');
-    let loginData: any = null;
     let autoLoginSuccess = false;
     
     // 第一次尝试登录
@@ -89,14 +88,12 @@ export async function POST(request: NextRequest) {
       if (!secondLoginError && secondLoginData?.session) {
         console.log('[API] 自动登录重试成功');
         autoLoginSuccess = true;
-        loginData = secondLoginData;
       } else {
         console.error('[API] 自动登录重试失败:', secondLoginError?.message);
       }
     } else {
       console.log('[API] 自动登录成功');
       autoLoginSuccess = true;
-      loginData = firstLoginData;
     }
 
     // 5. 计算有效期
@@ -105,10 +102,6 @@ export async function POST(request: NextRequest) {
     expiryDate.setDate(expiryDate.getDate() + validDays);
     const accountExpiresAt = expiryDate.toISOString();
 
-    // 🔥 获取当前会话用于生成标识
-    const { data: { session } } = await supabase.auth.getSession();
-    const currentSessionId = session ? `sess_${session.user.id}_${session.access_token.substring(0, 12)}` : 'new';
-    
     // 6. 更新用户资料（profiles 表）
     const now = new Date();
     const { error: profileError } = await supabase.from('profiles').upsert({
@@ -116,9 +109,7 @@ export async function POST(request: NextRequest) {
       email: email.trim(),
       access_key_id: keyData.id,
       account_expires_at: accountExpiresAt,
-      last_login_at: now.toISOString(),
-      last_login_session: currentSessionId,
-      created_at: now.toISOString(), // 🔥 重要：设置创建时间用于新用户判断
+      created_at: now.toISOString(), // 🔥 设置创建时间
       updated_at: now.toISOString(),
     });
     
@@ -138,35 +129,20 @@ export async function POST(request: NextRequest) {
     console.log('[API] 注册完成:', { 
       userId: authData.user.id, 
       expiresAt: accountExpiresAt,
-      autoLoginSuccess,
-      sessionId: currentSessionId
+      autoLoginSuccess
     });
 
-    // 🔥 创建响应并设置新用户标记Cookie
-    const response = NextResponse.json({
+    // 🔥 返回简单响应，告诉前端注册成功
+    return NextResponse.json({
       success: true,
-      message: autoLoginSuccess ? '注册成功！已自动登录' : '注册成功，请手动登录',
+      message: '注册成功！',
       user: { 
         id: authData.user.id, 
         email: authData.user.email 
       },
       expires_at: accountExpiresAt,
-      auto_login: autoLoginSuccess,
-      redirect_to: '/lobby'
+      auto_login: autoLoginSuccess, // 仅供参考，前端不依赖这个
     });
-    
-    // 🔥 设置新用户标记Cookie，有效时间1分钟
-    response.cookies.set({
-      name: 'new_user_grace_period',
-      value: 'true',
-      path: '/',
-      maxAge: 60, // 1分钟
-      httpOnly: false, // 前端也需要访问
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-    });
-
-    return response;
 
   } catch (error: any) {
     console.error('[API] 未处理异常:', error);
