@@ -69,12 +69,12 @@ export default async function ThemesPage() {
     redirect('/login');
   }
   
-  // 3. 获取当前会话
-const { data: { session } } = await supabase.auth.getSession();
-  if (!currentSession) {
-    await supabase.auth.signOut();
-    redirect('/login?error=no_session');
-  }
+ // 3. 获取当前会话
+const { data: { session: currentSession } } = await supabase.auth.getSession();
+if (!currentSession) {
+  await supabase.auth.signOut();
+  redirect('/login?error=no_session');
+}
   
   // 4. 获取用户资料（包括会话信息和有效期）
   const { data: profile } = await supabase
