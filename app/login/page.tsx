@@ -1,12 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { Suspense } from 'react';
 import Link from "next/link";
 import { LoginForm } from "@/components/login-form";
 import { SignUpForm } from "@/components/sign-up-form";
 import { Button } from "@/components/ui/button";
-import { useSearchParams } from 'next/navigation';
-import { createBrowserClient } from '@supabase/ssr';
 
 // 检查是否是管理员 - 兼容两种环境变量命名
 function isAdminEmail(email: string | undefined | null): boolean {
@@ -22,7 +20,33 @@ function isAdminEmail(email: string | undefined | null): boolean {
   );
 }
 
+// Suspense 的 fallback 组件
+function LoginLoading() {
+  return (
+    <div className="flex min-h-svh w-full items-center justify-center p-6">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-pink mx-auto mb-4"></div>
+        <p className="text-gray-400">加载登录页面...</p>
+      </div>
+    </div>
+  );
+}
+
+// 主页面组件 - 使用 Suspense 包裹
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginLoading />}>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+// 内容组件 - 使用 useSearchParams
+import { useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { createBrowserClient } from '@supabase/ssr';
+
+function LoginPageContent() {
   const searchParams = useSearchParams();
   const [user, setUser] = useState<any>(null);
   const [active, setActive] = useState<'login' | 'signup'>('login');
