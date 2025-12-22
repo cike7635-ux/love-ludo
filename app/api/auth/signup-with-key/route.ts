@@ -1,4 +1,5 @@
 // /app/api/auth/signup-with-key/route.ts
+// 注册API - 简化版本（不自动登录）
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';

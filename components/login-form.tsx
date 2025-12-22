@@ -1,3 +1,5 @@
+// /components/login-form.tsx
+// 登录表单 - 添加邮箱预填和注册成功消息功能
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -7,8 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
-import { Mail, Lock, Eye, EyeOff, CheckCircle } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react";
 
 export function LoginForm({
   className,
@@ -21,12 +23,43 @@ export function LoginForm({
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loginSuccess, setLoginSuccess] = useState(false);
+  const [showRegistrationSuccess, setShowRegistrationSuccess] = useState(false); // 新增
   
   const router = useRouter();
   const searchParams = useSearchParams();
   
-  // 获取重定向参数（来自中间件）
-  const redirectTo = searchParams.get('redirectedFrom') || "/lobby";
+  // 🔥 修复：统一重定向参数，优先使用redirect，没有则用redirectedFrom
+  const redirectFromParam = searchParams.get('redirect');
+  const redirectedFromParam = searchParams.get('redirectedFrom');
+  const redirectTo = redirectFromParam || redirectedFromParam || "/lobby";
+  
+  // 🔥 新增：从URL获取预填邮箱和注册成功标志
+  useEffect(() => {
+    const emailFromUrl = searchParams.get("email");
+    const fromSignup = searchParams.get("from") === "signup";
+    
+    console.log("[LoginForm] URL参数:", { 
+      emailFromUrl, 
+      fromSignup, 
+      redirectFromParam, 
+      redirectedFromParam 
+    });
+    
+    if (emailFromUrl) {
+      setEmail(emailFromUrl);
+      console.log("[LoginForm] 已预填邮箱:", emailFromUrl);
+    }
+    
+    if (fromSignup) {
+      setShowRegistrationSuccess(true);
+      console.log("[LoginForm] 显示注册成功消息");
+      
+      // 3秒后自动清除成功消息
+      setTimeout(() => {
+        setShowRegistrationSuccess(false);
+      }, 3000);
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +67,7 @@ export function LoginForm({
     setIsLoading(true);
     setError(null);
     setLoginSuccess(false);
+    setShowRegistrationSuccess(false); // 登录时清除注册成功消息
 
     try {
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -56,7 +90,7 @@ export function LoginForm({
       
       // ============ 记录登录会话 ============
       try {
-    const sessionFingerprint = `sess_${authData.user.id}_${authData.session.access_token.substring(0, 12)}`;
+        const sessionFingerprint = `sess_${authData.user.id}_${authData.session.access_token.substring(0, 12)}`;
         
         const { error: updateError } = await supabase
           .from('profiles')
@@ -91,7 +125,20 @@ export function LoginForm({
   return (
     <div className={cn("", className)} {...props}>
       <form onSubmit={handleLogin} className="space-y-4">
-        {/* 成功状态提示 */}
+        {/* 注册成功消息 - 新增 */}
+        {showRegistrationSuccess && !loginSuccess && (
+          <div className="rounded-2xl border border-green-500/30 bg-green-500/10 backdrop-blur p-4">
+            <div className="flex items-center space-x-2 text-green-400">
+              <CheckCircle className="w-5 h-5" />
+              <span className="font-medium">✅ 注册成功！</span>
+            </div>
+            <p className="text-sm text-green-400/80 mt-1">
+              请使用刚才设置的密码登录
+            </p>
+          </div>
+        )}
+
+        {/* 登录成功状态提示 */}
         {loginSuccess && (
           <div className="rounded-2xl border border-green-500/30 bg-green-500/10 backdrop-blur p-4">
             <div className="flex items-center space-x-2 text-green-400">
@@ -169,9 +216,12 @@ export function LoginForm({
           </Link>
         </div>
 
-        {error && !loginSuccess && (
+        {error && !loginSuccess && !showRegistrationSuccess && (
           <div className="rounded-2xl border border-red-500/30 bg-red-500/10 backdrop-blur p-4">
-            <p className="text-sm text-red-300">{error}</p>
+            <div className="flex items-center text-red-300">
+              <AlertCircle className="w-5 h-5 mr-2" />
+              <p className="text-sm">{error}</p>
+            </div>
           </div>
         )}
 
@@ -205,3 +255,4 @@ export function LoginForm({
     </div>
   );
 }
+// [skip ci]

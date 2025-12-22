@@ -1,4 +1,5 @@
 // /components/sign-up-form.tsx
+// 注册表单 - 修改为成功后跳转到登录页
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -263,4 +264,3 @@ export function SignUpForm({
     </div>
   );
 }
-// [skip ci]
