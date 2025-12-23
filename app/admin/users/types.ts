@@ -19,39 +19,11 @@ export interface User {
   activeKeyUsedAt: string | null
   activeKeyExpires: string | null
   isActive: boolean
-  access_key?: any // 当前使用的密钥
-}
-
-// 游戏历史记录类型
-export interface GameHistory {
-  id: string
-  room_id: string | null
-  session_id: string | null
-  player1_id: string
-  player2_id: string
-  winner_id: string | null
-  started_at: string | null
-  ended_at: string | null
-  task_results: any[]
-  created_at: string
-  
-  // 增强字段
-  opponent: {
-    email: string
-    nickname: string | null
-  }
-  theme: {
-    title: string
-  }
-  duration: number | null
-  result: '胜利' | '失败' | '平局' | '未知'
-  user_role: '玩家1' | '玩家2'
-  completed_tasks: number
-  total_tasks: number
+  access_key?: any
 }
 
 export interface UserDetail {
-  // profiles 表字段
+  // 🔥 关键：这些字段名必须与API返回的完全一致
   id: string
   email: string
   nickname: string | null
@@ -66,8 +38,8 @@ export interface UserDetail {
   created_at: string
   updated_at: string
   
-  // 🔥 关键修复：使用复数形式，返回所有密钥
-  access_keys: Array<{
+  // 🔥 关键：必须与API返回的字段名一致（accessKeys，不是access_keys）
+  accessKeys: Array<{
     id: number
     key_code: string
     is_active: boolean
@@ -81,7 +53,8 @@ export interface UserDetail {
     updated_at: string
   }>
   
-  ai_usage_records: Array<{
+  // 🔥 关键：必须与API返回的字段名一致（aiUsageRecords，不是ai_usage_records）
+  aiUsageRecords: Array<{
     id: number
     user_id: string
     feature: string
@@ -91,6 +64,17 @@ export interface UserDetail {
     success: boolean
   }>
   
-  // 🔥 使用增强的游戏记录类型
-  game_history: GameHistory[]
+  // 🔥 关键：必须与API返回的字段名一致（gameHistory，不是game_history）
+  gameHistory: Array<{
+    id: string
+    room_id: string | null
+    session_id: string | null
+    player1_id: string
+    player2_id: string
+    winner_id: string | null
+    started_at: string | null
+    ended_at: string | null
+    task_results: any[]
+    created_at: string
+  }>
 }
