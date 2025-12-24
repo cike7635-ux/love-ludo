@@ -1,4 +1,4 @@
-// /app/admin/users/types.ts - 修复版本
+// /app/admin/users/types.ts - 完整修复版本（支持密钥历史记录）
 export interface User {
   id: string
   email: string
@@ -39,10 +39,38 @@ export interface UserDetail {
   createdAt: string
   updatedAt: string
   
-  // 关联字段
+  // 🔥 新增：密钥使用历史
+  keyUsageHistory: KeyUsageHistory[]
+  
+  // 🔥 新增：当前使用的密钥
+  currentAccessKey: AccessKey | null
+  
+  // 兼容性字段：所有密钥（从使用历史中提取）
   accessKeys: AccessKey[]
+  
+  // AI使用记录
   aiUsageRecords: AiUsageRecord[]
+  
+  // 游戏历史记录
   gameHistory: GameHistory[]
+}
+
+export interface KeyUsageHistory {
+  id: number
+  userId: string
+  accessKeyId: number
+  usedAt: string
+  usageType: 'activate' | 'renew' | 'change' | 'system' | 'admin'
+  previousKeyId: number | null
+  nextKeyId: number | null
+  operationBy: string | null
+  notes: string | null
+  createdAt: string
+  updatedAt: string
+  
+  // 关联数据
+  accessKey?: AccessKey | null
+  operator?: { id: string; email: string; nickname: string } | null
 }
 
 export interface AccessKey {
@@ -81,39 +109,48 @@ export interface GameHistory {
   taskResults: any[]
 }
 
-// 🔥 关键修复：简化的归一化函数
+// 🔥 核心修复：增强的归一化函数
 export function normalizeUserDetail(data: any): UserDetail {
   if (!data) {
     console.warn('❌ normalizeUserDetail: 输入数据为空')
     return {} as UserDetail
   }
   
-  // 🔍 调试日志：查看原始数据
-  console.log('🔄 归一化输入数据 - 原始结构:', {
-    原始字段: Object.keys(data),
+  // 🔍 详细调试日志
+  console.log('🔄 归一化输入数据 - 详细分析:', {
+    所有字段: Object.keys(data),
+    keyUsageHistory存在: 'keyUsageHistory' in data,
+    keyUsageHistory长度: data.keyUsageHistory?.length || 0,
+    currentAccessKey存在: 'currentAccessKey' in data,
+    currentAccessKey值: data.currentAccessKey,
     accessKeys存在: 'accessKeys' in data,
-    accessKeys类型: typeof data.accessKeys,
-    accessKeys是数组: Array.isArray(data.accessKeys),
     accessKeys长度: data.accessKeys?.length || 0,
     aiUsageRecords存在: 'aiUsageRecords' in data,
-    aiUsageRecords类型: typeof data.aiUsageRecords,
-    aiUsageRecords是数组: Array.isArray(data.aiUsageRecords),
     aiUsageRecords长度: data.aiUsageRecords?.length || 0,
     gameHistory存在: 'gameHistory' in data,
     gameHistory长度: data.gameHistory?.length || 0
   })
   
-  // 🔍 深度调试：查看实际内容
-  if (data.accessKeys) {
-    console.log('🗝️ 原始密钥数组详情:', {
-      是数组: Array.isArray(data.accessKeys),
-      长度: data.accessKeys.length,
-      第一个元素: data.accessKeys[0],
-      第一个元素字段: data.accessKeys[0] ? Object.keys(data.accessKeys[0]) : []
+  // 🔍 深度调试：查看具体内容
+  if (data.keyUsageHistory && Array.isArray(data.keyUsageHistory)) {
+    console.log('🗝️ 密钥使用历史详情:', {
+      是数组: true,
+      长度: data.keyUsageHistory.length,
+      第一个元素: data.keyUsageHistory[0],
+      第一个元素字段: data.keyUsageHistory[0] ? Object.keys(data.keyUsageHistory[0]) : []
     })
   }
   
-  // 🎯 核心修复：正确处理空数组和null值
+  if (data.aiUsageRecords && Array.isArray(data.aiUsageRecords)) {
+    console.log('🤖 AI记录详情:', {
+      是数组: true,
+      长度: data.aiUsageRecords.length,
+      第一个元素: data.aiUsageRecords[0],
+      第一个元素字段: data.aiUsageRecords[0] ? Object.keys(data.aiUsageRecords[0]) : []
+    })
+  }
+
+  // 🎯 核心处理
   const result: UserDetail = {
     // 基本字段直接映射（支持驼峰和下划线）
     id: data.id || '',
@@ -130,13 +167,17 @@ export function normalizeUserDetail(data: any): UserDetail {
     createdAt: data.createdAt || data.created_at || '',
     updatedAt: data.updatedAt || data.updated_at || '',
     
-    // 🔥 关键修复：使用正确的数组处理逻辑
+    // 🔥 关键修复：处理所有数组字段
+    keyUsageHistory: normalizeKeyUsageHistory(data.keyUsageHistory),
+    currentAccessKey: data.currentAccessKey ? normalizeAccessKey(data.currentAccessKey) : null,
     accessKeys: normalizeAccessKeys(data.accessKeys),
     aiUsageRecords: normalizeAiUsageRecords(data.aiUsageRecords),
     gameHistory: normalizeGameHistory(data.gameHistory)
   }
   
-  console.log('✅ 归一化完成:', {
+  console.log('✅ 归一化完成结果:', {
+    keyUsageHistory数量: result.keyUsageHistory.length,
+    currentAccessKey存在: !!result.currentAccessKey,
     accessKeys数量: result.accessKeys.length,
     aiUsageRecords数量: result.aiUsageRecords.length,
     gameHistory数量: result.gameHistory.length,
@@ -155,30 +196,128 @@ export function normalizeUserDetail(data: any): UserDetail {
   return result
 }
 
-// 🔥 修复：正确处理空数组和字段名兼容
-export function normalizeAccessKeys(keys: any): AccessKey[] {
-  // ❌ 原来的问题：if (!keys || !Array.isArray(keys)) return []
-  // ✅ 修复：正确处理空数组
+// 🔥 密钥使用历史归一化
+export function normalizeKeyUsageHistory(history: any): KeyUsageHistory[] {
+  console.log('🔧 normalizeKeyUsageHistory 输入:', {
+    输入类型: typeof history,
+    是数组: Array.isArray(history),
+    输入值: history
+  })
   
+  if (history === undefined || history === null) {
+    console.log('📭 history 是 undefined 或 null，返回空数组')
+    return []
+  }
+  
+  if (!Array.isArray(history)) {
+    console.warn('❌ history 不是数组:', typeof history, history)
+    return []
+  }
+  
+  if (history.length === 0) {
+    console.log('📭 history 是空数组，返回空数组')
+    return []
+  }
+  
+  console.log('🔧 开始处理密钥使用历史，长度:', history.length)
+  
+  const result = history.map((item, index) => {
+    console.log(`🔧 处理历史记录 ${index + 1}:`, {
+      所有字段: Object.keys(item),
+      usedAt: item.usedAt || item.used_at,
+      accessKey存在: !!item.accessKey,
+      operator存在: !!item.operator
+    })
+    
+    // 智能字段名检测
+    const usageType = item.usageType || item.usage_type || 'activate'
+    
+    return {
+      id: item.id || 0,
+      userId: item.userId || item.user_id || '',
+      accessKeyId: item.accessKeyId || item.access_key_id || 0,
+      usedAt: item.usedAt || item.used_at || '',
+      usageType: usageType,
+      previousKeyId: item.previousKeyId || item.previous_key_id || null,
+      nextKeyId: item.nextKeyId || item.next_key_id || null,
+      operationBy: item.operationBy || item.operation_by || null,
+      notes: item.notes || null,
+      createdAt: item.createdAt || item.created_at || '',
+      updatedAt: item.updatedAt || item.updated_at || '',
+      
+      // 关联数据
+      accessKey: item.accessKey ? normalizeAccessKey(item.accessKey) : null,
+      operator: item.operator ? {
+        id: item.operator.id || '',
+        email: item.operator.email || '',
+        nickname: item.operator.nickname || null
+      } : null
+    }
+  })
+  
+  console.log('✅ normalizeKeyUsageHistory 输出:', {
+    处理数量: result.length,
+    第一个结果: result[0] || '无'
+  })
+  
+  return result
+}
+
+// 🔥 单个密钥归一化
+export function normalizeAccessKey(key: any): AccessKey {
+  if (!key) {
+    console.warn('❌ normalizeAccessKey: 输入为空')
+    return {} as AccessKey
+  }
+  
+  console.log('🔧 normalizeAccessKey 输入:', {
+    所有字段: Object.keys(key),
+    keyCode原始值: key.keyCode,
+    key_code原始值: key.key_code
+  })
+  
+  // 智能字段名检测
+  const keyCode = key.keyCode || key.key_code || ''
+  const isActive = key.isActive !== undefined 
+    ? key.isActive 
+    : (key.is_active !== undefined ? key.is_active : true)
+  
+  const result = {
+    id: key.id || 0,
+    keyCode: keyCode,
+    isActive: isActive,
+    usedCount: key.usedCount || key.used_count || 0,
+    maxUses: key.maxUses || key.max_uses || 1,
+    keyExpiresAt: key.keyExpiresAt || key.key_expires_at || null,
+    accountValidForDays: key.accountValidForDays || key.account_valid_for_days || 30,
+    userId: key.userId || key.user_id || null,
+    usedAt: key.usedAt || key.used_at || null,
+    createdAt: key.createdAt || key.created_at || '',
+    updatedAt: key.updatedAt || key.updated_at || ''
+  }
+  
+  console.log('✅ normalizeAccessKey 输出:', result)
+  return result
+}
+
+// 🔥 密钥数组归一化（兼容性）
+export function normalizeAccessKeys(keys: any): AccessKey[] {
   console.log('🔧 normalizeAccessKeys 输入:', {
     输入类型: typeof keys,
     是数组: Array.isArray(keys),
     输入值: keys
   })
   
-  // 处理undefined或null
   if (keys === undefined || keys === null) {
     console.log('📭 keys 是 undefined 或 null，返回空数组')
     return []
   }
   
-  // 处理非数组
   if (!Array.isArray(keys)) {
     console.warn('❌ keys 不是数组:', typeof keys, keys)
     return []
   }
   
-  // 处理空数组（这是关键！）
   if (keys.length === 0) {
     console.log('📭 keys 是空数组，返回空数组')
     return []
@@ -187,7 +326,6 @@ export function normalizeAccessKeys(keys: any): AccessKey[] {
   console.log('🔧 开始处理密钥数组，长度:', keys.length)
   
   const result = keys.map((key, index) => {
-    // 🔥 深度调试每个密钥
     console.log(`🔧 处理密钥 ${index + 1}:`, {
       所有字段: Object.keys(key),
       keyCode字段值: key.keyCode,
@@ -196,36 +334,18 @@ export function normalizeAccessKeys(keys: any): AccessKey[] {
       is_active字段值: key.is_active
     })
     
-    // 🔥 智能字段名检测
-    const keyCode = key.keyCode || key.key_code || ''
-    const isActive = key.isActive !== undefined 
-      ? key.isActive 
-      : (key.is_active !== undefined ? key.is_active : true)
-    
-    return {
-      id: key.id || 0,
-      keyCode: keyCode,
-      isActive: isActive,
-      usedCount: key.usedCount || key.used_count || 0,
-      maxUses: key.maxUses || key.max_uses || 1,
-      keyExpiresAt: key.keyExpiresAt || key.key_expires_at || null,
-      accountValidForDays: key.accountValidForDays || key.account_valid_for_days || 30,
-      userId: key.userId || key.user_id || null,
-      usedAt: key.usedAt || key.used_at || null,
-      createdAt: key.createdAt || key.created_at || '',
-      updatedAt: key.updatedAt || key.updated_at || ''
-    }
+    return normalizeAccessKey(key)
   })
   
   console.log('✅ normalizeAccessKeys 输出:', {
     处理数量: result.length,
-    第一个结果: result[0]
+    第一个结果: result[0] || '无'
   })
   
   return result
 }
 
-// 🔥 同样修复AI记录处理
+// 🔥 AI记录归一化
 export function normalizeAiUsageRecords(records: any): AiUsageRecord[] {
   console.log('🔧 normalizeAiUsageRecords 输入:', {
     输入类型: typeof records,
@@ -250,25 +370,33 @@ export function normalizeAiUsageRecords(records: any): AiUsageRecord[] {
   
   console.log('🔧 开始处理AI记录数组，长度:', records.length)
   
-  const result = records.map(record => ({
-    id: record.id || 0,
-    userId: record.userId || record.user_id || '',
-    feature: record.feature || 'unknown',
-    createdAt: record.createdAt || record.created_at || '',
-    requestData: record.requestData || record.request_data || {},
-    responseData: record.responseData || record.response_data || {},
-    success: record.success !== undefined ? record.success : true
-  }))
+  const result = records.map((record, index) => {
+    console.log(`🔧 处理AI记录 ${index + 1}:`, {
+      所有字段: Object.keys(record),
+      feature字段值: record.feature,
+      success字段值: record.success
+    })
+    
+    return {
+      id: record.id || 0,
+      userId: record.userId || record.user_id || '',
+      feature: record.feature || 'unknown',
+      createdAt: record.createdAt || record.created_at || '',
+      requestData: record.requestData || record.request_data || {},
+      responseData: record.responseData || record.response_data || {},
+      success: record.success !== undefined ? record.success : true
+    }
+  })
   
   console.log('✅ normalizeAiUsageRecords 输出:', {
     处理数量: result.length,
-    第一个结果: result[0]
+    第一个结果: result[0] || '无'
   })
   
   return result
 }
 
-// 🔥 同样修复游戏记录处理
+// 🔥 游戏记录归一化
 export function normalizeGameHistory(games: any): GameHistory[] {
   console.log('🔧 normalizeGameHistory 输入:', {
     输入类型: typeof games,
@@ -307,7 +435,7 @@ export function normalizeGameHistory(games: any): GameHistory[] {
   
   console.log('✅ normalizeGameHistory 输出:', {
     处理数量: result.length,
-    第一个结果: result[0]
+    第一个结果: result[0] || '无'
   })
   
   return result
