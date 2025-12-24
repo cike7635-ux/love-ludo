@@ -100,20 +100,22 @@ export default function UsersPage() {
         let activeKeyExpires = null;
         let keyStatus: 'active' | 'expired' | 'unused' = 'unused';
 
-        // 首先检查 access_keys 数组（与弹窗页一样的方式）
-        if (profile.access_keys && Array.isArray(profile.access_keys) && profile.access_keys.length > 0) {
+        // 首先检查 current_access_key（与详情页相同的逻辑）
+        if (profile.current_access_key) {
+          const currentKey = profile.current_access_key;
+          keyCode = currentKey.key_code || currentKey.keyCode;
+          activeKeyUsedAt = currentKey.used_at || currentKey.usedAt;
+          activeKeyExpires = currentKey.key_expires_at || currentKey.keyExpiresAt;
+          keyStatus = getKeyStatus(currentKey);
+          console.log(`使用 current_access_key 获取密钥:`, keyCode);
+        }
+        // 如果没有 current_access_key，检查 access_keys 数组
+        else if (profile.access_keys && Array.isArray(profile.access_keys) && profile.access_keys.length > 0) {
           // 如果有 access_key_id，优先查找匹配的密钥
           if (profile.access_key_id) {
-            // 尝试不同的匹配方式
-            const currentKey = profile.access_keys.find((key: any) => {
-              // 直接匹配ID
-              if (key.id === profile.access_key_id) return true;
-              // 数字类型匹配
-              if (key.id === Number(profile.access_key_id)) return true;
-              // 字符串类型匹配
-              if (String(key.id) === String(profile.access_key_id)) return true;
-              return false;
-            });
+            const currentKey = profile.access_keys.find((key: any) =>
+              String(key.id) === String(profile.access_key_id)
+            );
 
             if (currentKey) {
               keyCode = currentKey.key_code || currentKey.keyCode;
@@ -121,7 +123,7 @@ export default function UsersPage() {
               activeKeyExpires = currentKey.key_expires_at || currentKey.keyExpiresAt;
               keyStatus = getKeyStatus(currentKey);
             } else {
-              // 如果没有找到匹配的密钥，使用第一个密钥
+              // 如果没有找到匹配的，使用第一个密钥
               const firstKey = profile.access_keys[0];
               keyCode = firstKey.key_code || firstKey.keyCode;
               activeKeyUsedAt = firstKey.used_at || firstKey.usedAt;
@@ -138,7 +140,7 @@ export default function UsersPage() {
           }
         }
 
-        // 如果没有密钥代码，但有 access_key_id，则显示ID
+        // 如果还没有密钥代码，但有密钥ID，则显示ID
         if (!keyCode && profile.access_key_id) {
           keyCode = `ID: ${profile.access_key_id}`;
         }
@@ -419,11 +421,8 @@ export default function UsersPage() {
     fetchUsers()
   }, [fetchUsers])
 
-  ///渲染密钥单元格
+  // 渲染密钥单元格 - 直接显示密钥，去掉悬浮提示
   const renderKeyCell = (user: UserType) => {
-    // 调试日志
-    console.log(`渲染密钥单元格 - 用户: ${user.email}, 密钥: ${user.activeKey}, 状态: ${user.keyStatus}`);
-
     if (!user.activeKey || user.activeKey === '无') {
       return (
         <div className="flex items-center text-gray-500">
@@ -433,70 +432,51 @@ export default function UsersPage() {
       );
     }
 
-    // 如果密钥以 "ID: " 开头，显示为"需查看详情"
-    if (user.activeKey.startsWith('ID:')) {
-      const keyId = user.activeKey.replace('ID: ', '');
-      return (
-        <div className="group relative">
-          <span className="text-blue-400 text-sm hover:underline cursor-help">
-            需查看详情
-          </span>
-          <div className="absolute hidden group-hover:block z-50 bg-gray-800 p-2 rounded shadow-lg text-xs min-w-[200px]">
-            <div className="font-semibold text-gray-300 mb-1">密钥信息</div>
-            <div className="text-gray-400">密钥ID: {keyId}</div>
-            <div className="text-gray-400 mt-1">请在详情页查看完整密钥代码</div>
-          </div>
-        </div>
-      );
+    // 如果密钥是"ID: xxx"格式，只显示ID部分
+    let displayKey = user.activeKey;
+    if (displayKey.startsWith('ID:')) {
+      displayKey = displayKey.replace('ID: ', '');
     }
 
-    // 检查是否是有效的密钥代码（包含破折号，如 XY-30-TEST03）
-    const isValidKeyCode = user.activeKey.includes('-') && /^[A-Za-z0-9-]+$/.test(user.activeKey);
+    const keyStatusColors = {
+      active: 'bg-green-500/10 text-green-400',
+      expired: 'bg-red-500/10 text-red-400',
+      unused: 'bg-yellow-500/10 text-yellow-400'
+    };
 
-    if (isValidKeyCode) {
-      const keyStatusColors = {
-        active: 'bg-green-500/10 text-green-400',
-        expired: 'bg-red-500/10 text-red-400',
-        unused: 'bg-yellow-500/10 text-yellow-400'
-      };
+    // 检查是否是有效的密钥代码（包含破折号）
+    const isValidKeyCode = displayKey.includes('-');
 
-      return (
-        <div className="space-y-1">
-          <div className="flex items-center">
-            <Key className="w-3 h-3 mr-1 text-amber-400" />
-            <code
-              className="text-xs bg-amber-500/10 text-amber-400 px-2 py-1 rounded font-mono truncate max-w-[120px] hover:bg-amber-500/20 transition-colors cursor-help"
-              title={`密钥: ${user.activeKey}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                navigator.clipboard.writeText(user.activeKey || '');
-                alert(`已复制密钥: ${user.activeKey}`);
-              }}
-            >
-              {user.activeKey}
-            </code>
-          </div>
-          <div className="flex items-center justify-between">
-            <span className={`text-xs px-1.5 py-0.5 rounded ${keyStatusColors[user.keyStatus || 'unused']}`}>
-              {user.keyStatus === 'active' ? '已使用' : user.keyStatus === 'expired' ? '已过期' : '未使用'}
-            </span>
-            {user.accessKeyId && (
-              <span className="text-gray-600 text-xs">ID: {user.accessKeyId}</span>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    // 如果不是标准的密钥代码格式，直接显示
     return (
-      <div className="flex items-center">
-        <Key className="w-3 h-3 mr-1 text-amber-400" />
-        <span className="text-amber-400 text-sm truncate max-w-[120px]">{user.activeKey}</span>
+      <div className="space-y-1">
+        <div className="flex items-center">
+          <Key className="w-3 h-3 mr-1 text-amber-400" />
+          <code
+            className={`text-xs px-2 py-1 rounded font-mono truncate max-w-[120px] hover:opacity-80 transition-opacity ${isValidKeyCode
+              ? 'bg-amber-500/10 text-amber-400'
+              : 'bg-blue-500/10 text-blue-400'
+              }`}
+            title={isValidKeyCode ? `密钥: ${displayKey}` : `密钥ID: ${displayKey}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              navigator.clipboard.writeText(displayKey || '');
+              alert(`已复制: ${displayKey}`);
+            }}
+          >
+            {displayKey}
+          </code>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className={`text-xs px-1.5 py-0.5 rounded ${keyStatusColors[user.keyStatus || 'unused']}`}>
+            {user.keyStatus === 'active' ? '已使用' : user.keyStatus === 'expired' ? '已过期' : '未使用'}
+          </span>
+          {user.accessKeyId && (
+            <span className="text-gray-600 text-xs">关联ID: {user.accessKeyId}</span>
+          )}
+        </div>
       </div>
     );
   };
-
   // 渲染性别单元格
   const renderGenderCell = (user: UserType) => {
     const gender = user.gender || '未设置'

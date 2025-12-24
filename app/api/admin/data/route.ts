@@ -345,7 +345,7 @@ export async function GET(request: NextRequest) {
       console.log('📋 查询用户列表...')
 
       try {
-        // 构建基础查询（不包含关联数据，提高性能）
+        // 构建基础查询
         let query = supabaseAdmin
           .from('profiles')
           .select('*', { count: 'exact' })
@@ -383,10 +383,8 @@ export async function GET(request: NextRequest) {
         const end = start + limit - 1
         query = query.range(start, end)
 
-        // 应用排序
-        const sortBy = searchParams.get('sortBy') || 'created_at'
-        const sortOrder = searchParams.get('sortOrder') || 'desc'
-        query = query.order(sortBy, { ascending: sortOrder === 'asc' })
+        // 默认按创建时间排序
+        query = query.order('created_at', { ascending: false })
 
         console.log(`📊 执行查询: page=${page}, limit=${limit}, filter=${filter}, search=${search}`)
 
@@ -410,7 +408,7 @@ export async function GET(request: NextRequest) {
 
           console.log(`🔑 为 ${userIds.length} 个用户查询密钥信息...`)
 
-          // 批量查询这些用户的密钥
+          // 批量查询这些用户的密钥 - 确保选择所有字段，包括key_code
           const { data: accessKeysData, error: accessKeysError } = await supabaseAdmin
             .from('access_keys')
             .select('*')
@@ -434,33 +432,37 @@ export async function GET(request: NextRequest) {
 
           console.log(`✅ 获取到 ${accessKeysData?.length || 0} 条密钥记录`)
 
-          // 将密钥数据按用户分组
-          const keysByUser: Record<string, any[]> = {}
-          if (accessKeysData && accessKeysData.length > 0) {
-            accessKeysData.forEach((key: any) => {
-              if (key.user_id) {
-                if (!keysByUser[key.user_id]) {
-                  keysByUser[key.user_id] = []
-                }
-                keysByUser[key.user_id].push(key)
-              }
-            })
-          }
-
           // 为每个用户添加密钥信息
           const profilesWithKeys = result.data.map((profile: any) => {
-            const userKeys = keysByUser[profile.id] || []
+            // 找到当前用户的密钥
+            const userKeys = accessKeysData?.filter((key: any) => key.user_id === profile.id) || []
 
-            // 查找当前使用的密钥
+            // 查找当前使用的密钥 - 精确匹配
             let currentAccessKey = null
             if (profile.access_key_id && userKeys.length > 0) {
-              // 尝试多种匹配方式
               currentAccessKey = userKeys.find((key: any) => {
-                return key.id === profile.access_key_id ||
-                  key.id === Number(profile.access_key_id) ||
-                  String(key.id) === String(profile.access_key_id)
+                // 多种匹配方式确保找到正确的密钥
+                return String(key.id) === String(profile.access_key_id) ||
+                  key.id === profile.access_key_id ||
+                  key.id === Number(profile.access_key_id)
               })
             }
+
+            // 如果没找到匹配的密钥，使用第一个（如果有）
+            if (!currentAccessKey && userKeys.length > 0) {
+              currentAccessKey = userKeys[0]
+            }
+
+            // 调试日志
+            console.log(`用户 ${profile.email} 的密钥信息:`, {
+              access_key_id: profile.access_key_id,
+              found_keys: userKeys.length,
+              current_key: currentAccessKey ? {
+                id: currentAccessKey.id,
+                key_code: currentAccessKey.key_code,
+                user_id: currentAccessKey.user_id
+              } : '无'
+            })
 
             return {
               ...profile,
