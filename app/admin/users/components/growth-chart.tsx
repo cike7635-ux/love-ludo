@@ -1,4 +1,4 @@
-// /app/admin/users/components/growth-chart.tsx - 完整修复版
+// /app/admin/users/components/growth-chart.tsx - 像素高度修复版
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
@@ -39,18 +39,6 @@ export default function GrowthChart() {
         if (result.success && result.data && Array.isArray(result.data)) {
           setGrowthData(result.data)
           setUseMockData(false)
-          
-          // 调试：打印计算后的高度
-          const maxCount = Math.max(...result.data.map(d => d.count), 1)
-          console.log('📊 高度计算调试:', {
-            最大count值: maxCount,
-            各柱子高度: result.data.map(day => ({
-              日期: day.date,
-              count: day.count,
-              计算高度: (day.count / maxCount) * 80,
-              最终高度: Math.max((day.count / maxCount) * 80, 8)
-            }))
-          })
         } else {
           console.warn('图表API返回数据格式不正确，使用模拟数据')
           setUseMockData(true)
@@ -106,24 +94,24 @@ export default function GrowthChart() {
   const totalGrowth = growthData.reduce((sum, day) => sum + day.count, 0)
   const maxCount = Math.max(...growthData.map(d => d.count), 1)
 
-  // 获取柱子颜色
+  // 获取柱子颜色 - 根据数据量使用不同颜色
   const getBarColor = (count: number) => {
-    if (count === 0) return 'from-gray-500 to-gray-400'
+    if (count === 0) return 'from-gray-600 to-gray-500'
     if (count <= 2) return 'from-blue-400 to-blue-300'
     if (count <= 5) return 'from-blue-500 to-blue-400'
     if (count <= 10) return 'from-blue-600 to-blue-500'
     return 'from-blue-700 to-blue-600'
   }
 
-  // 获取柱子高度
+  // 获取柱子高度 - 使用像素单位避免百分比问题
   const getBarHeight = (count: number, maxCount: number) => {
-    if (count === 0) return '10px' // 0数据固定10px高度
+    const MAX_PIXEL_HEIGHT = 80; // 最大80px高度（容器h-32约128px）
     
-    const baseHeight = (count / maxCount) * 80
-    const minHeight = 10 // 最小10px
-    const calculatedHeight = Math.max(baseHeight, minHeight)
+    if (count === 0) return '12px'; // 0数据固定12px高度，比10px稍微明显一点
     
-    return `${calculatedHeight}%`
+    // 使用像素单位，避免百分比计算问题
+    const pixelHeight = (count / maxCount) * MAX_PIXEL_HEIGHT;
+    return `${Math.max(pixelHeight, 12)}px`; // 最小12px
   }
 
   return (
@@ -167,7 +155,7 @@ export default function GrowthChart() {
         </div>
       ) : (
         <>
-          {/* 柱状图 - 关键修复 */}
+          {/* 柱状图 - 使用像素单位修复 */}
           <div className="relative">
             <div className="flex items-end h-32 gap-1 mb-2">
               {growthData.map((day, index) => {
@@ -178,7 +166,8 @@ export default function GrowthChart() {
                   日期: day.date,
                   新增: day.count,
                   高度: height,
-                  颜色: color
+                  颜色: color,
+                  最大count: maxCount
                 })
                 
                 return (
@@ -190,15 +179,10 @@ export default function GrowthChart() {
                       className={`w-3/4 bg-gradient-to-t ${color} rounded-t-sm transition-all duration-300 hover:opacity-80 cursor-pointer group-hover:shadow-lg group-hover:shadow-blue-500/20`}
                       style={{ 
                         height: height,
-                        minHeight: '10px' // 确保有最小高度
+                        // 不再使用minHeight，因为getBarHeight已经返回了具体的像素值
                       }}
                       title={`${day.date}: 新增 ${day.count} 人，累计 ${day.cumulative} 人`}
-                    >
-                      {/* 柱子内部内容，用于调试 */}
-                      <div className="h-full w-full opacity-0 hover:opacity-100 transition-opacity flex items-end justify-center">
-                        <span className="text-white text-xs mb-1">{day.count}</span>
-                      </div>
-                    </div>
+                    />
                     <div className="text-xs text-gray-500 mt-1">
                       {day.date.split('/')[1]}
                     </div>
@@ -207,22 +191,13 @@ export default function GrowthChart() {
               })}
             </div>
             
-            {/* Y轴标签 */}
-            <div className="absolute left-0 top-0 bottom-0 w-8 flex flex-col justify-between text-xs text-gray-500">
-              <span>{maxCount}</span>
-              <span>{Math.round(maxCount * 0.75)}</span>
-              <span>{Math.round(maxCount * 0.5)}</span>
-              <span>{Math.round(maxCount * 0.25)}</span>
-              <span>0</span>
-            </div>
-            
-            {/* 网格线 */}
-            <div className="absolute top-0 left-8 right-0 h-32 pointer-events-none">
+            {/* Y轴网格线 */}
+            <div className="absolute top-0 left-0 right-0 h-32 pointer-events-none">
               {[0, 25, 50, 75, 100].map((percent) => (
                 <div
                   key={percent}
                   className="absolute left-0 right-0 border-t border-gray-700/30"
-                  style={{ top: `${100 - percent}%` }}
+                  style={{ top: `${percent}%` }}
                 />
               ))}
             </div>
@@ -253,18 +228,6 @@ export default function GrowthChart() {
               </p>
             </div>
           </div>
-          
-          {/* 调试信息（仅开发环境显示） */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="mt-4 p-2 bg-gray-900/50 rounded text-xs">
-              <div className="text-gray-400 mb-1">调试信息：</div>
-              <div className="text-gray-500">
-                数据点数: {growthData.length} | 
-                最大count: {maxCount} | 
-                总增长: {totalGrowth}
-              </div>
-            </div>
-          )}
           
           {/* 刷新按钮 */}
           <div className="mt-3 text-center">
