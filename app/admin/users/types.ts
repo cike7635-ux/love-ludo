@@ -1,4 +1,4 @@
-// /app/admin/users/types.ts - 紧急修复版本（解决编译错误）
+// /app/admin/users/types.ts - 最终修复版本
 export interface User {
   id: string
   email: string
@@ -39,12 +39,6 @@ export interface UserDetail {
   createdAt: string
   updatedAt: string
   
-  // 新增：密钥使用历史
-  keyUsageHistory: KeyUsageHistory[]
-  
-  // 新增：当前使用的密钥
-  currentAccessKey: AccessKey | null
-  
   // 兼容性字段：所有密钥
   accessKeys: AccessKey[]
   
@@ -53,24 +47,9 @@ export interface UserDetail {
   
   // 游戏历史记录
   gameHistory: GameHistory[]
-}
-
-export interface KeyUsageHistory {
-  id: number
-  userId: string
-  accessKeyId: number
-  usedAt: string
-  usageType: 'activate' | 'renew' | 'change' | 'system' | 'admin'
-  previousKeyId: number | null
-  nextKeyId: number | null
-  operationBy: string | null
-  notes: string | null
-  createdAt: string
-  updatedAt: string
   
-  // 关联数据
-  accessKey?: AccessKey | null
-  operator?: { id: string; email: string; nickname: string } | null
+  // 🔥 新增：当前使用的密钥
+  currentAccessKey: AccessKey | null
 }
 
 export interface AccessKey {
@@ -109,22 +88,67 @@ export interface GameHistory {
   taskResults: any[]
 }
 
-// 🔥 核心修复：简化的归一化函数（去除未定义的函数调用）
+// 🔥 最终修复：正确处理混合命名
 export function normalizeUserDetail(data: any): UserDetail {
   if (!data) {
     console.warn('❌ normalizeUserDetail: 输入数据为空')
     return {} as UserDetail
   }
   
-  // 🔍 简化的调试日志
-  console.log('🔄 归一化开始 - 原始数据字段:', Object.keys(data))
+  // 🔍 关键：打印完整的原始数据结构
+  console.log('🎯 完整原始数据结构分析:', {
+    所有字段: Object.keys(data),
+    accessKeys字段存在: 'accessKeys' in data,
+    accessKeys值: data.accessKeys,
+    accessKeys是数组: Array.isArray(data.accessKeys),
+    accessKeys长度: data.accessKeys?.length || 0,
+    aiUsageRecords字段存在: 'aiUsageRecords' in data,
+    aiUsageRecords值: data.aiUsageRecords,
+    aiUsageRecords是数组: Array.isArray(data.aiUsageRecords),
+    aiUsageRecords长度: data.aiUsageRecords?.length || 0,
+    currentAccessKey字段存在: 'currentAccessKey' in data,
+    currentAccessKey值: data.currentAccessKey
+  })
   
-  // 🎯 关键发现：从API验证看到数据已经是驼峰命名，且数据完整！
-  // 问题在于前端接收的数据与API返回的不一致
+  // 🔍 如果字段存在但是空数组，打印API验证
+  if ('accessKeys' in data && Array.isArray(data.accessKeys) && data.accessKeys.length === 0) {
+    console.warn('⚠️ 前端收到accessKeys为空数组！但API返回有数据')
+    // 尝试直接调用API验证
+    fetch('/api/admin/data?table=profiles&detailId=50be6bfc-ec45-4ba8-9200-f4b14d129a24')
+      .then(r => r.json())
+      .then(apiData => {
+        console.log('🔍 API直接验证:', {
+          API返回accessKeys长度: apiData.data?.accessKeys?.length || 0,
+          API返回accessKeys: apiData.data?.accessKeys?.[0],
+          API返回aiUsageRecords长度: apiData.data?.aiUsageRecords?.length || 0
+        })
+      })
+  }
   
-  // 直接使用data中的字段（API返回的是驼峰命名）
+  // 🔥 核心修复：直接使用前端接收的字段名
+  // 注意：前端接收的是混合命名，accessKeys和aiUsageRecords是驼峰命名
+  const accessKeysData = data.accessKeys || []
+  const aiUsageRecordsData = data.aiUsageRecords || []
+  const currentAccessKeyData = data.currentAccessKey || null
+  
+  console.log('🔧 数据提取结果:', {
+    accessKeys数据: accessKeysData,
+    accessKeys长度: accessKeysData.length,
+    aiUsageRecords数据: aiUsageRecordsData,
+    aiUsageRecords长度: aiUsageRecordsData.length,
+    currentAccessKey数据: currentAccessKeyData
+  })
+  
+  // 如果前端接收的是空数组，但实际API有数据，可能是数据传递问题
+  // 我们尝试从currentAccessKey构建一个密钥数组
+  let finalAccessKeys = accessKeysData
+  if (accessKeysData.length === 0 && currentAccessKeyData) {
+    console.log('🔄 使用currentAccessKey构建密钥数组')
+    finalAccessKeys = [currentAccessKeyData]
+  }
+  
   const result: UserDetail = {
-    // 基本字段
+    // 基本字段（支持混合命名）
     id: data.id || '',
     email: data.email || '',
     nickname: data.nickname || null,
@@ -139,107 +163,34 @@ export function normalizeUserDetail(data: any): UserDetail {
     createdAt: data.createdAt || data.created_at || '',
     updatedAt: data.updatedAt || data.updated_at || '',
     
-    // 🔥 关键修复：直接使用API返回的数据
-    keyUsageHistory: Array.isArray(data.keyUsageHistory) ? data.keyUsageHistory.map((item: any) => ({
-      id: item.id || 0,
-      userId: item.userId || item.user_id || '',
-      accessKeyId: item.accessKeyId || item.access_key_id || 0,
-      usedAt: item.usedAt || item.used_at || '',
-      usageType: item.usageType || item.usage_type || 'activate',
-      previousKeyId: item.previousKeyId || item.previous_key_id || null,
-      nextKeyId: item.nextKeyId || item.next_key_id || null,
-      operationBy: item.operationBy || item.operation_by || null,
-      notes: item.notes || null,
-      createdAt: item.createdAt || item.created_at || '',
-      updatedAt: item.updatedAt || item.updated_at || '',
-      accessKey: item.accessKey ? {
-        id: item.accessKey.id || 0,
-        keyCode: item.accessKey.keyCode || item.accessKey.key_code || '',
-        isActive: item.accessKey.isActive !== undefined ? item.accessKey.isActive : 
-                 (item.accessKey.is_active !== undefined ? item.accessKey.is_active : true),
-        usedCount: item.accessKey.usedCount || item.accessKey.used_count || 0,
-        maxUses: item.accessKey.maxUses || item.accessKey.max_uses || 1,
-        keyExpiresAt: item.accessKey.keyExpiresAt || item.accessKey.key_expires_at || null,
-        accountValidForDays: item.accessKey.accountValidForDays || item.accessKey.account_valid_for_days || 30,
-        userId: item.accessKey.userId || item.accessKey.user_id || null,
-        usedAt: item.accessKey.usedAt || item.accessKey.used_at || null,
-        createdAt: item.accessKey.createdAt || item.accessKey.created_at || '',
-        updatedAt: item.accessKey.updatedAt || item.accessKey.updated_at || ''
-      } : null,
-      operator: item.operator ? {
-        id: item.operator.id || '',
-        email: item.operator.email || '',
-        nickname: item.operator.nickname || null
-      } : null
-    })) : [],
-    
-    currentAccessKey: data.currentAccessKey ? {
-      id: data.currentAccessKey.id || 0,
-      keyCode: data.currentAccessKey.keyCode || data.currentAccessKey.key_code || '',
-      isActive: data.currentAccessKey.isActive !== undefined ? data.currentAccessKey.isActive : 
-               (data.currentAccessKey.is_active !== undefined ? data.currentAccessKey.is_active : true),
-      usedCount: data.currentAccessKey.usedCount || data.currentAccessKey.used_count || 0,
-      maxUses: data.currentAccessKey.maxUses || data.currentAccessKey.max_uses || 1,
-      keyExpiresAt: data.currentAccessKey.keyExpiresAt || data.currentAccessKey.key_expires_at || null,
-      accountValidForDays: data.currentAccessKey.accountValidForDays || data.currentAccessKey.account_valid_for_days || 30,
-      userId: data.currentAccessKey.userId || data.currentAccessKey.user_id || null,
-      usedAt: data.currentAccessKey.usedAt || data.currentAccessKey.used_at || null,
-      createdAt: data.currentAccessKey.createdAt || data.currentAccessKey.created_at || '',
-      updatedAt: data.currentAccessKey.updatedAt || data.currentAccessKey.updated_at || ''
-    } : null,
-    
-    accessKeys: Array.isArray(data.accessKeys) ? data.accessKeys.map((key: any) => ({
-      id: key.id || 0,
-      keyCode: key.keyCode || key.key_code || '',
-      isActive: key.isActive !== undefined ? key.isActive : 
-               (key.is_active !== undefined ? key.is_active : true),
-      usedCount: key.usedCount || key.used_count || 0,
-      maxUses: key.maxUses || key.max_uses || 1,
-      keyExpiresAt: key.keyExpiresAt || key.key_expires_at || null,
-      accountValidForDays: key.accountValidForDays || key.account_valid_for_days || 30,
-      userId: key.userId || key.user_id || null,
-      usedAt: key.usedAt || key.used_at || null,
-      createdAt: key.createdAt || key.created_at || '',
-      updatedAt: key.updatedAt || key.updated_at || ''
-    })) : [],
-    
-    aiUsageRecords: Array.isArray(data.aiUsageRecords) ? data.aiUsageRecords.map((record: any) => ({
-      id: record.id || 0,
-      userId: record.userId || record.user_id || '',
-      feature: record.feature || 'unknown',
-      createdAt: record.createdAt || record.created_at || '',
-      requestData: record.requestData || record.request_data || {},
-      responseData: record.responseData || record.response_data || {},
-      success: record.success !== undefined ? record.success : true
-    })) : [],
-    
-    gameHistory: Array.isArray(data.gameHistory) ? data.gameHistory.map((game: any) => ({
-      id: game.id || '',
-      roomId: game.roomId || game.room_id || null,
-      sessionId: game.sessionId || game.session_id || null,
-      player1Id: game.player1Id || game.player1_id || '',
-      player2Id: game.player2Id || game.player2_id || '',
-      winnerId: game.winnerId || game.winner_id || null,
-      startedAt: game.startedAt || game.started_at || null,
-      endedAt: game.endedAt || game.ended_at || null,
-      taskResults: game.taskResults || game.task_results || []
-    })) : []
+    // 🔥 直接使用提取的数据
+    accessKeys: normalizeAccessKeys(finalAccessKeys),
+    aiUsageRecords: normalizeAiUsageRecords(aiUsageRecordsData),
+    gameHistory: normalizeGameHistory(data.gameHistory || []),
+    currentAccessKey: currentAccessKeyData ? normalizeAccessKey(currentAccessKeyData) : null
   }
   
-  console.log('✅ 归一化完成:', {
-    密钥使用历史数量: result.keyUsageHistory.length,
-    当前密钥存在: !!result.currentAccessKey,
-    所有密钥数量: result.accessKeys.length,
+  console.log('✅ 归一化最终结果:', {
+    密钥数量: result.accessKeys.length,
     AI记录数量: result.aiUsageRecords.length,
-    游戏记录数量: result.gameHistory.length
+    当前密钥存在: !!result.currentAccessKey,
+    第一条密钥: result.accessKeys.length > 0 ? result.accessKeys[0] : '无',
+    第一条AI记录: result.aiUsageRecords.length > 0 ? result.aiUsageRecords[0] : '无'
   })
   
   return result
 }
 
-// 🔥 兼容性：保留原有的归一化函数（简化版）
+// 简化的归一化函数
 export function normalizeAccessKeys(keys: any): AccessKey[] {
   if (!Array.isArray(keys)) return []
+  
+  console.log('🔧 normalizeAccessKeys 处理:', {
+    输入长度: keys.length,
+    第一个元素: keys[0],
+    第一个元素字段: keys[0] ? Object.keys(keys[0]) : []
+  })
+  
   return keys.map(key => ({
     id: key.id || 0,
     keyCode: key.keyCode || key.key_code || '',
@@ -256,8 +207,32 @@ export function normalizeAccessKeys(keys: any): AccessKey[] {
   }))
 }
 
+export function normalizeAccessKey(key: any): AccessKey {
+  return {
+    id: key.id || 0,
+    keyCode: key.keyCode || key.key_code || '',
+    isActive: key.isActive !== undefined ? key.isActive : 
+             (key.is_active !== undefined ? key.is_active : true),
+    usedCount: key.usedCount || key.used_count || 0,
+    maxUses: key.maxUses || key.max_uses || 1,
+    keyExpiresAt: key.keyExpiresAt || key.key_expires_at || null,
+    accountValidForDays: key.accountValidForDays || key.account_valid_for_days || 30,
+    userId: key.userId || key.user_id || null,
+    usedAt: key.usedAt || key.used_at || null,
+    createdAt: key.createdAt || key.created_at || '',
+    updatedAt: key.updatedAt || key.updated_at || ''
+  }
+}
+
 export function normalizeAiUsageRecords(records: any): AiUsageRecord[] {
   if (!Array.isArray(records)) return []
+  
+  console.log('🔧 normalizeAiUsageRecords 处理:', {
+    输入长度: records.length,
+    第一个元素: records[0],
+    第一个元素字段: records[0] ? Object.keys(records[0]) : []
+  })
+  
   return records.map(record => ({
     id: record.id || 0,
     userId: record.userId || record.user_id || '',
@@ -266,5 +241,21 @@ export function normalizeAiUsageRecords(records: any): AiUsageRecord[] {
     requestData: record.requestData || record.request_data || {},
     responseData: record.responseData || record.response_data || {},
     success: record.success !== undefined ? record.success : true
+  }))
+}
+
+export function normalizeGameHistory(games: any): GameHistory[] {
+  if (!Array.isArray(games)) return []
+  
+  return games.map(game => ({
+    id: game.id || '',
+    roomId: game.roomId || game.room_id || null,
+    sessionId: game.sessionId || game.session_id || null,
+    player1Id: game.player1Id || game.player1_id || '',
+    player2Id: game.player2Id || game.player2_id || '',
+    winnerId: game.winnerId || game.winner_id || null,
+    startedAt: game.startedAt || game.started_at || null,
+    endedAt: game.endedAt || game.ended_at || null,
+    taskResults: game.taskResults || game.task_results || []
   }))
 }
