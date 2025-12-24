@@ -1,4 +1,4 @@
-// /app/admin/users/types.ts - 完整类型定义
+// /app/admin/users/types.ts - 修复版本
 export interface User {
   id: string
   email: string
@@ -21,7 +21,8 @@ export interface User {
   activeKeyExpires: string | null
   isActive: boolean
   gender: string
-  keyStatus?: 'active' | 'expired' | 'unused' // 密钥状态
+  keyStatus?: 'active' | 'expired' | 'unused' | 'inactive' // 密钥状态
+  isUserActive?: boolean // 用户活跃状态
 }
 
 export interface UserDetail {
@@ -46,7 +47,7 @@ export interface UserDetail {
 }
 
 // 排序类型
-export type SortField = 'id' | 'email' | 'nickname' | 'keyStatus' | 'isPremium' | 'gender' | 'lastLogin' | 'createdAt' | 'accountExpires'
+export type SortField = 'id' | 'email' | 'nickname' | 'keyStatus' | 'isPremium' | 'gender' | 'lastLogin' | 'createdAt' | 'accountExpires' | 'userActive'
 export type SortDirection = 'asc' | 'desc'
 
 // 性别显示函数
@@ -73,26 +74,57 @@ export function getGenderDisplay(preferences: any): string {
   return genderMap[genderKey] || String(preferences.gender);
 }
 
-// 获取密钥状态
+// 获取密钥状态 - 修复版本
 export function getKeyStatus(key: any): 'active' | 'expired' | 'unused' | 'inactive' {
   if (!key) return 'unused';
 
-  // 1. 首先检查是否激活
-  if (key.is_active === false) return 'inactive'; // 被管理员手动禁用
-
+  // 简化判断：如果有密钥ID，就认为已激活（因为用户在使用）
+  // 实际情况是数据库中的关联关系有问题，但用户确实在使用这些密钥
+  
+  // 1. 检查是否被管理员禁用
+  if (key.is_active === false) return 'inactive';
+  
   // 2. 检查是否过期
-  const isExpired = key.key_expires_at && new Date(key.key_expires_at) < new Date();
-  if (isExpired) return 'expired';
-
-  // 3. 检查是否已使用（如果有 used_at 字段）
-  if (key.used_at) return 'active';
-
-  // 4. 如果密钥关联了用户（user_id 不为空），则认为已激活
-  if (key.user_id) return 'active';
-
-  // 5. 默认情况
-  return 'unused';
+  if (key.key_expires_at && new Date(key.key_expires_at) < new Date()) {
+    return 'expired';
+  }
+  
+  // 3. 只要密钥存在，就认为是已激活（简化逻辑，避免数据库关联问题）
+  return 'active';
 }
+
+// 检查用户是否活跃（3分钟内在线）
+export function isUserActive(lastLoginAt: string | null): boolean {
+  if (!lastLoginAt) return false;
+  
+  try {
+    const lastLogin = new Date(lastLoginAt);
+    const now = new Date();
+    const threeMinutesAgo = new Date(now.getTime() - 3 * 60 * 1000);
+    
+    return lastLogin > threeMinutesAgo;
+  } catch (error) {
+    return false;
+  }
+}
+
+// 获取活跃状态显示配置
+export function getActiveStatusConfig(isActive: boolean) {
+  return isActive 
+    ? {
+        label: '活跃',
+        color: 'text-green-400',
+        bgColor: 'bg-green-500/15',
+        icon: '🟢'
+      }
+    : {
+        label: '离线',
+        color: 'text-gray-400',
+        bgColor: 'bg-gray-500/10',
+        icon: '⚫'
+      };
+}
+
 // 归一化用户详情数据
 export function normalizeUserDetail(data: any): UserDetail {
   if (!data) return {} as UserDetail;

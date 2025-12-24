@@ -1,15 +1,24 @@
-// /app/admin/users/page.tsx - 修复版本
+// /app/admin/users/page.tsx - 修复版本（完整）
 'use client'
 
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Users, Mail, Search, Download, MoreVertical, Key, ChevronDown,
-  Shield, Calendar, User, Clock, Tag, Filter,
+  Shield, Calendar, User, Clock, Tag, Filter, Wifi, WifiOff,
   SortAsc, SortDesc
 } from 'lucide-react'
 import UserDetailModal from './components/user-detail-modal'
 import GrowthChart from './components/growth-chart'
-import { User as UserType, SortField, SortDirection, getGenderDisplay, getKeyStatus, normalizeUserDetail } from './types'
+import { 
+  User as UserType, 
+  SortField, 
+  SortDirection, 
+  getGenderDisplay, 
+  getKeyStatus, 
+  normalizeUserDetail,
+  isUserActive,
+  getActiveStatusConfig
+} from './types'
 
 export const dynamic = 'force-dynamic'
 
@@ -36,9 +45,6 @@ export default function UsersPage() {
   const [showSortMenu, setShowSortMenu] = useState(false)
 
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
-
-
-
 
   // 获取用户数据
   const fetchUsers = useCallback(async () => {
@@ -98,7 +104,7 @@ export default function UsersPage() {
         let keyCode = null;
         let activeKeyUsedAt = null;
         let activeKeyExpires = null;
-        let keyStatus: 'active' | 'expired' | 'unused' = 'unused';
+        let keyStatus: 'active' | 'expired' | 'unused' | 'inactive' = 'unused';
 
         // 首先检查 current_access_key（与详情页相同的逻辑）
         if (profile.current_access_key) {
@@ -107,7 +113,6 @@ export default function UsersPage() {
           activeKeyUsedAt = currentKey.used_at || currentKey.usedAt;
           activeKeyExpires = currentKey.key_expires_at || currentKey.keyExpiresAt;
           keyStatus = getKeyStatus(currentKey);
-          console.log(`使用 current_access_key 获取密钥:`, keyCode);
         }
         // 如果没有 current_access_key，检查 access_keys 数组
         else if (profile.access_keys && Array.isArray(profile.access_keys) && profile.access_keys.length > 0) {
@@ -153,6 +158,9 @@ export default function UsersPage() {
         // 获取性别
         const gender = getGenderDisplay(profile.preferences);
 
+        // 计算用户活跃状态
+        const userActive = isUserActive(profile.last_login_at);
+
         return {
           id: profile.id,
           email: profile.email,
@@ -175,7 +183,8 @@ export default function UsersPage() {
           activeKeyExpires: activeKeyExpires,
           isActive: true,
           gender: gender,
-          keyStatus: keyStatus
+          keyStatus: keyStatus,
+          isUserActive: userActive
         };
       });
 
@@ -190,7 +199,6 @@ export default function UsersPage() {
       setLoading(false);
     }
   }, [currentPage, searchTerm, filter]);
-
 
   // 获取用户详情
   const fetchUserDetail = async (userId: string) => {
@@ -271,6 +279,10 @@ export default function UsersPage() {
           aValue = a.lastLoginRaw || ''
           bValue = b.lastLoginRaw || ''
           break
+        case 'userActive':
+          aValue = a.isUserActive ? 1 : 0
+          bValue = b.isUserActive ? 1 : 0
+          break
         case 'createdAt':
           aValue = a.createdAtRaw || ''
           bValue = b.createdAtRaw || ''
@@ -293,6 +305,11 @@ export default function UsersPage() {
         return sortDirection === 'asc'
           ? (aValue === bValue ? 0 : aValue ? -1 : 1)
           : (aValue === bValue ? 0 : aValue ? 1 : -1)
+      }
+
+      // 数字比较（活跃状态）
+      if (typeof aValue === 'number') {
+        return sortDirection === 'asc' ? aValue - bValue : bValue - aValue
       }
 
       // 日期比较
@@ -377,7 +394,7 @@ export default function UsersPage() {
 
   // CSV导出
   const handleExportCSV = () => {
-    const headers = ['ID', '邮箱', '昵称', '性别', '会员状态', '当前密钥', '密钥状态', '最后登录', '注册时间', '会员到期时间']
+    const headers = ['ID', '邮箱', '昵称', '性别', '会员状态', '当前密钥', '密钥状态', '最后登录', '活跃状态', '注册时间', '会员到期时间']
     const csvData = sortedUsers.map(user => [
       user.id,
       user.email,
@@ -385,8 +402,9 @@ export default function UsersPage() {
       user.gender,
       user.isPremium ? '会员中' : '免费',
       user.activeKey || '',
-      user.keyStatus === 'active' ? '已使用' : user.keyStatus === 'expired' ? '已过期' : '未使用',
+      user.keyStatus === 'active' ? '已激活' : user.keyStatus === 'expired' ? '已过期' : user.keyStatus === 'inactive' ? '已禁用' : '未使用',
       user.lastLogin,
+      user.isUserActive ? '活跃' : '离线',
       user.createdAt,
       user.accountExpires
     ])
@@ -420,7 +438,6 @@ export default function UsersPage() {
   useEffect(() => {
     fetchUsers()
   }, [fetchUsers])
-
 
   // 渲染密钥单元格 - 显示密钥代码和正确状态
   const renderKeyCell = (user: UserType) => {
@@ -483,6 +500,7 @@ export default function UsersPage() {
       </div>
     );
   };
+
   // 渲染性别单元格
   const renderGenderCell = (user: UserType) => {
     const gender = user.gender || '未设置'
@@ -504,12 +522,38 @@ export default function UsersPage() {
     )
   }
 
+  // 渲染最后登录时间和活跃状态
+  const renderLastLoginCell = (user: UserType) => {
+    const config = getActiveStatusConfig(!!user.isUserActive);
+    
+    return (
+      <div className="space-y-2">
+        {/* 最后登录时间 */}
+        <div className="text-gray-300 text-sm">
+          {user.lastLogin}
+        </div>
+        
+        {/* 活跃状态标签 */}
+        <div className="flex items-center">
+          <span 
+            className={`inline-flex items-center px-2 py-1 rounded-full text-xs ${config.bgColor} ${config.color}`}
+            title={user.isUserActive ? '3分钟内在线，当前活跃' : '超过3分钟未活动'}
+          >
+            <span className="mr-1.5">{config.icon}</span>
+            {config.label}
+          </span>
+        </div>
+      </div>
+    );
+  };
+
   // 统计数据
   const stats = useMemo(() => {
     const maleCount = sortedUsers.filter(u => u.gender === '男').length
     const femaleCount = sortedUsers.filter(u => u.gender === '女').length
     const otherGenderCount = sortedUsers.filter(u => !['男', '女', '未设置'].includes(u.gender)).length
     const unknownCount = sortedUsers.filter(u => u.gender === '未设置').length
+    const activeUsers = sortedUsers.filter(u => u.isUserActive).length
 
     return {
       total: sortedUsers.length,
@@ -520,7 +564,8 @@ export default function UsersPage() {
       male: maleCount,
       female: femaleCount,
       otherGender: otherGenderCount,
-      unknown: unknownCount
+      unknown: unknownCount,
+      activeNow: activeUsers
     }
   }, [sortedUsers])
 
@@ -628,6 +673,7 @@ export default function UsersPage() {
                 {[
                   { field: 'createdAt' as SortField, label: '注册时间', icon: Calendar },
                   { field: 'lastLogin' as SortField, label: '最后登录', icon: Clock },
+                  { field: 'userActive' as SortField, label: '活跃状态', icon: Wifi },
                   { field: 'accountExpires' as SortField, label: '会员到期', icon: Calendar },
                   { field: 'gender' as SortField, label: '性别', icon: User },
                   { field: 'isPremium' as SortField, label: '会员状态', icon: Shield },
@@ -656,7 +702,8 @@ export default function UsersPage() {
               { value: 'premium', label: '会员用户' },
               { value: 'free', label: '免费用户' },
               { value: 'active24h', label: '24h活跃' },
-              { value: 'expired', label: '已过期' }
+              { value: 'expired', label: '已过期' },
+              { value: 'active', label: '当前活跃', count: stats.activeNow }
             ].map((item) => (
               <button
                 key={item.value}
@@ -670,6 +717,11 @@ export default function UsersPage() {
                 }}
               >
                 {item.label}
+                {item.count !== undefined && (
+                  <span className="ml-1.5 px-1.5 py-0.5 bg-blue-500/20 rounded text-xs">
+                    {item.count}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -695,8 +747,8 @@ export default function UsersPage() {
           <p className="text-xl md:text-2xl font-bold text-pink-400 mt-1">{stats.female}</p>
         </div>
         <div className="bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4">
-          <p className="text-sm text-gray-400">其他性别</p>
-          <p className="text-xl md:text-2xl font-bold text-purple-400 mt-1">{stats.otherGender}</p>
+          <p className="text-sm text-gray-400">活跃用户</p>
+          <p className="text-xl md:text-2xl font-bold text-green-400 mt-1">{stats.activeNow}</p>
         </div>
         <div className="col-span-2">
           <GrowthChart />
@@ -908,8 +960,8 @@ export default function UsersPage() {
                     <td className="py-3 px-4 md:px-6">
                       {renderGenderCell(user)}
                     </td>
-                    <td className="py-3 px-4 md:px-6 text-gray-300 text-sm">
-                      {user.lastLogin}
+                    <td className="py-3 px-4 md:px-6">
+                      {renderLastLoginCell(user)}
                     </td>
                     <td className="py-3 px-4 md:px-6 text-gray-300 text-sm">
                       {user.createdAt}
