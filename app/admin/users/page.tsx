@@ -1,9 +1,10 @@
-// /app/admin/users/page.tsx - 完整修复版
+// /app/admin/users/page.tsx
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Users, Mail, Calendar, Shield, Search, Filter, Download, MoreVertical, Key, Brain, Gamepad2 } from 'lucide-react'
+import { Users, Mail, Calendar, Shield, Search, Filter, Download, MoreVertical, Key, Brain, Gamepad2, ChevronDown } from 'lucide-react'
 import UserDetailModal from './components/user-detail-modal'
+import GrowthChart from './components/growth-chart'
 import { User, UserDetail } from './types'
 
 export const dynamic = 'force-dynamic'
@@ -21,6 +22,8 @@ export default function UsersPage() {
   const [detailModalOpen, setDetailModalOpen] = useState(false)
   const [selectedUserDetail, setSelectedUserDetail] = useState<UserDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [showBatchMenu, setShowBatchMenu] = useState(false)
+  const [batchActionLoading, setBatchActionLoading] = useState(false)
 
   const totalPages = Math.ceil(totalCount / ITEMS_PER_PAGE)
 
@@ -66,7 +69,7 @@ export default function UsersPage() {
         throw new Error(result.error || 'API返回未知错误')
       }
 
-      // 7. 转换数据格式 - 🔥 使用下划线命名
+      // 7. 转换数据格式
       const formattedUsers: User[] = (result.data || []).map((profile: any) => {
         const lastLogin = profile.last_login_at
           ? new Date(profile.last_login_at).toLocaleString('zh-CN')
@@ -80,30 +83,42 @@ export default function UsersPage() {
           ? new Date(profile.account_expires_at) > new Date()
           : false
 
+        // 🔥 修复：使用正确的字段名 access_keys（下划线命名）
+        const accessKeysArray = profile.access_keys || []
+        const currentAccessKey = profile.current_access_key || null
+        
+        // 查找用户当前使用的密钥
+        let activeKeyData = null
+        if (currentAccessKey) {
+          activeKeyData = currentAccessKey
+        } else if (profile.access_key_id && accessKeysArray.length > 0) {
+          // 通过 access_key_id 查找对应的密钥
+          activeKeyData = accessKeysArray.find((key: any) => key.id === profile.access_key_id)
+        } else if (accessKeysArray.length > 0) {
+          // 如果没有指定当前密钥，使用第一个
+          activeKeyData = accessKeysArray[0]
+        }
+
         return {
           id: profile.id,
           email: profile.email,
           nickname: profile.nickname,
-          full_name: profile.full_name,  // 🔥 下划线
-          avatar_url: profile.avatar_url,  // 🔥 下划线
+          fullName: profile.full_name,
+          avatarUrl: profile.avatar_url,
           bio: profile.bio,
           preferences: profile.preferences,
           isAdmin: profile.email === '2200691917@qq.com', // 您的管理员邮箱
           isPremium: isPremium,
           lastLogin: lastLogin,
-          lastLoginRaw: profile.last_login_at,  // 🔥 下划线
-          accountExpires: profile.account_expires_at,  // 🔥 下划线
+          lastLoginRaw: profile.last_login_at,
+          accountExpires: profile.account_expires_at,
           createdAt: createdAt,
-          createdAtRaw: profile.created_at,  // 🔥 下划线
-          access_key_id: profile.access_key_id,  // 🔥 下划线
-          // 列表查询不返回密钥数据，所以显示"需查看详情"
-          activeKey: '需查看详情',
-          activeKeyUsedAt: null,
-          activeKeyExpires: null,
-          isActive: true,
-          // 🔥 添加其他下划线字段
-          last_login_session: profile.last_login_session,
-          updated_at: profile.updated_at
+          createdAtRaw: profile.created_at,
+          accessKeyId: profile.access_key_id,
+          activeKey: activeKeyData?.key_code || null,
+          activeKeyUsedAt: activeKeyData?.used_at || null,
+          activeKeyExpires: activeKeyData?.key_expires_at || null,
+          isActive: true
         }
       })
 
@@ -113,119 +128,111 @@ export default function UsersPage() {
 
     } catch (error) {
       console.error('获取用户数据失败:', error)
-      setUsers([])
-      setTotalCount(0)
     } finally {
       setLoading(false)
     }
   }, [currentPage, searchTerm, filter])
 
-  // 🔥 修复：获取用户详情 - 完整修复版
+  // 获取用户详情 - 通过安全API
   const fetchUserDetail = async (userId: string) => {
-    console.log('🔍 开始获取用户详情:', userId)
     setDetailLoading(true)
-    setSelectedUserDetail(null) // 先清空旧数据
-    
     try {
       const response = await fetch(`/api/admin/data?table=profiles&detailId=${userId}`, {
         credentials: 'include',
-        headers: {
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        console.error('❌ API响应失败:', response.status, errorText)
         throw new Error(`获取详情失败: ${response.status}`)
       }
 
       const result = await response.json()
       
-      console.log('📦 API返回详情结果:', {
-        成功: result.success,
-        错误信息: result.error,
-        数据结构: result.data ? Object.keys(result.data) : '无数据',
-        密钥字段存在: result.data && 'access_keys' in result.data,
-        密钥长度: result.data?.access_keys?.length || 0,
-        AI字段存在: result.data && 'ai_usage_records' in result.data,
-        AI长度: result.data?.ai_usage_records?.length || 0,
-        游戏字段存在: result.data && 'game_history' in result.data,
-        游戏长度: result.data?.game_history?.length || 0
-      })
-      
       if (!result.success) {
-        console.error('❌ API返回失败:', result.error)
         throw new Error(result.error || '未找到用户详情')
       }
 
-      if (!result.data) {
-        console.error('❌ API返回的data为空')
-        throw new Error('用户详情数据为空')
-      }
-
-      // 🔥 直接构建 UserDetail 对象（使用下划线命名）
       const userDetail: UserDetail = {
-        id: result.data.id || '',
-        email: result.data.email || '',
-        nickname: result.data.nickname || null,
-        full_name: result.data.full_name || null,
-        avatar_url: result.data.avatar_url || null,
-        bio: result.data.bio || null,
-        preferences: result.data.preferences || {},
-        account_expires_at: result.data.account_expires_at || null,
-        last_login_at: result.data.last_login_at || null,
-        last_login_session: result.data.last_login_session || null,
-        access_key_id: result.data.access_key_id || null,
-        created_at: result.data.created_at || '',
-        updated_at: result.data.updated_at || '',
-        access_keys: result.data.access_keys || [],
-        ai_usage_records: result.data.ai_usage_records || [],
-        game_history: result.data.game_history || [],
-        // 可选字段
-        key_usage_history: result.data.key_usage_history || [],
-        current_access_key: result.data.current_access_key || null
+        id: result.data.id,
+        email: result.data.email,
+        nickname: result.data.nickname,
+        full_name: result.data.full_name,
+        avatar_url: result.data.avatar_url,
+        bio: result.data.bio,
+        preferences: result.data.preferences,
+        account_expires_at: result.data.account_expires_at,
+        last_login_at: result.data.last_login_at,
+        last_login_session: result.data.last_login_session,
+        access_key_id: result.data.access_key_id,
+        created_at: result.data.created_at,
+        updated_at: result.data.updated_at,
+        accessKeys: result.data.access_keys || [],
+        aiUsageRecords: result.data.ai_usage_records || [],
+        gameHistory: result.data.game_history || []
       }
-
-      console.log('✅ 构建的用户详情对象:', {
-        id: userDetail.id,
-        email: userDetail.email,
-        access_keys长度: userDetail.access_keys.length,
-        ai_usage_records长度: userDetail.ai_usage_records.length,
-        game_history长度: userDetail.game_history.length,
-        日期字段: {
-          account_expires_at: userDetail.account_expires_at,
-          last_login_at: userDetail.last_login_at,
-          created_at: userDetail.created_at
-        }
-      })
 
       setSelectedUserDetail(userDetail)
 
-    } catch (error: any) {
-      console.error('❌ 获取用户详情失败:', error.message)
-      console.error('错误堆栈:', error.stack)
-      setSelectedUserDetail(null)
-      
-      // 显示友好的错误提示（可选）
-      if (process.env.NODE_ENV === 'development') {
-        alert(`获取用户详情失败: ${error.message}\n请查看控制台日志获取详细信息。`)
-      }
+    } catch (error) {
+      console.error('获取用户详情失败:', error)
     } finally {
       setDetailLoading(false)
     }
   }
 
-  // 批量禁用用户（暂时简化）
-  const handleBatchDisable = async () => {
-    if (!selectedUsers.length || !confirm(`确定要禁用这 ${selectedUsers.length} 个账户吗？`)) return
-    alert('批量禁用功能正在开发中，请稍后使用')
+  // 批量操作
+  const handleBatchAction = async (action: 'disable' | 'enable' | 'delete') => {
+    if (!selectedUsers.length) return
+    
+    const actionNames = {
+      disable: { text: '禁用', confirm: '确定要禁用这些账户吗？\n\n禁用后用户将无法登录系统。' },
+      enable: { text: '启用', confirm: '确定要启用这些账户吗？\n\n启用后用户将恢复会员权限。' },
+      delete: { text: '删除', confirm: '确定要删除这些账户吗？\n\n此操作会将用户标记为删除，但保留历史数据。' }
+    }
+    
+    const { text, confirm: confirmText } = actionNames[action]
+    
+    if (!confirm(`${confirmText}\n\n涉及 ${selectedUsers.length} 个用户`)) return
+    
+    setBatchActionLoading(true)
+    
+    try {
+      const response = await fetch('/api/admin/users/batch-disable', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ 
+          userIds: selectedUsers,
+          action: action,
+          reason: `管理员批量${text}操作`
+        }),
+        credentials: 'include',
+      })
+
+      const result = await response.json()
+      
+      if (result.success) {
+        alert(`✅ 成功${text}了 ${result.data.affectedCount} 个用户`)
+        // 刷新用户列表
+        fetchUsers()
+        // 清空选择
+        setSelectedUsers([])
+        // 关闭菜单
+        setShowBatchMenu(false)
+      } else {
+        throw new Error(result.error || '操作失败')
+      }
+    } catch (error: any) {
+      console.error(`批量${text}失败:`, error)
+      alert(`❌ 批量${text}失败: ${error.message}`)
+    } finally {
+      setBatchActionLoading(false)
+    }
   }
 
   // CSV导出
   const handleExportCSV = () => {
-    const headers = ['ID', '邮箱', '昵称', '会员状态', '最后登录', '注册时间', '当前密钥', '密钥使用时间']
+    const headers = ['ID', '邮箱', '昵称', '会员状态', '最后登录', '注册时间', '当前密钥', '密钥使用时间', '密钥过期时间']
     const csvData = users.map(user => [
       user.id,
       user.email,
@@ -233,8 +240,9 @@ export default function UsersPage() {
       user.isPremium ? '会员中' : '免费',
       user.lastLogin,
       user.createdAt,
-      user.activeKey || '需查看详情',
-      user.activeKeyUsedAt ? new Date(user.activeKeyUsedAt).toLocaleString('zh-CN') : ''
+      user.activeKey || '',
+      user.activeKeyUsedAt ? new Date(user.activeKeyUsedAt).toLocaleString('zh-CN') : '',
+      user.activeKeyExpires ? new Date(user.activeKeyExpires).toLocaleDateString('zh-CN') : ''
     ])
 
     const csvContent = [
@@ -256,18 +264,9 @@ export default function UsersPage() {
 
   // 处理详情查看
   const handleViewDetail = async (userId: string) => {
-    console.log('👀 查看用户详情:', userId)
     await fetchUserDetail(userId)
     setDetailModalOpen(true)
   }
-
-  // 🔥 刷新详情数据
-  const handleRefreshDetail = useCallback(async () => {
-    if (selectedUserDetail?.id) {
-      console.log('🔄 刷新用户详情:', selectedUserDetail.id)
-      await fetchUserDetail(selectedUserDetail.id)
-    }
-  }, [selectedUserDetail])
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-950 p-4 md:p-6">
@@ -287,17 +286,55 @@ export default function UsersPage() {
             <button
               onClick={handleExportCSV}
               className="px-3 py-2 md:px-4 md:py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 flex items-center"
+              disabled={users.length === 0}
             >
               <Download className="w-4 h-4 mr-2" />
               导出CSV
             </button>
+            
             {selectedUsers.length > 0 && (
-              <button
-                onClick={handleBatchDisable}
-                className="px-3 py-2 md:px-4 md:py-2 bg-gradient-to-r from-red-600 to-pink-600 hover:opacity-90 rounded-lg text-sm text-white whitespace-nowrap"
-              >
-                批量禁用 ({selectedUsers.length})
-              </button>
+              <div className="relative">
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleBatchAction('disable')}
+                    className="px-3 py-2 md:px-4 md:py-2 bg-gradient-to-r from-red-600 to-pink-600 hover:opacity-90 rounded-lg text-sm text-white whitespace-nowrap"
+                    disabled={batchActionLoading}
+                  >
+                    {batchActionLoading ? '处理中...' : `批量禁用 (${selectedUsers.length})`}
+                  </button>
+                  <button
+                    onClick={() => setShowBatchMenu(!showBatchMenu)}
+                    className="px-3 py-2 md:px-4 md:py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm text-gray-300 flex items-center"
+                    disabled={batchActionLoading}
+                  >
+                    <MoreVertical className="w-4 h-4 mr-2" />
+                    更多操作
+                    <ChevronDown className={`w-4 h-4 ml-1 transition-transform ${showBatchMenu ? 'rotate-180' : ''}`} />
+                  </button>
+                </div>
+                
+                {/* 批量操作菜单 */}
+                {showBatchMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-gray-800 border border-gray-700 rounded-lg shadow-lg z-50">
+                    <button
+                      onClick={() => handleBatchAction('enable')}
+                      className="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-700 border-b border-gray-700 first:rounded-t-lg flex items-center"
+                      disabled={batchActionLoading}
+                    >
+                      <Shield className="w-4 h-4 mr-2 text-green-400" />
+                      批量启用会员
+                    </button>
+                    <button
+                      onClick={() => handleBatchAction('delete')}
+                      className="w-full text-left px-4 py-3 text-sm text-gray-300 hover:bg-gray-700 last:rounded-b-lg flex items-center"
+                      disabled={batchActionLoading}
+                    >
+                      <Users className="w-4 h-4 mr-2 text-red-400" />
+                      批量删除账户
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -363,11 +400,9 @@ export default function UsersPage() {
               new Date(u.lastLoginRaw) > new Date(Date.now() - 24 * 60 * 60 * 1000)).length}
           </p>
         </div>
-        <div className="col-span-2 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl p-4">
-          <p className="text-sm text-gray-400">用户增长趋势（最近7天）</p>
-          <p className="text-xs text-blue-400 mt-1 cursor-pointer hover:underline">
-            点击查看详细图表 →
-          </p>
+        {/* 增长趋势图表 */}
+        <div className="col-span-2">
+          <GrowthChart />
         </div>
       </div>
 
@@ -381,7 +416,7 @@ export default function UsersPage() {
                 <button 
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                   disabled={currentPage === 1}
-                  className="px-3 py-1 bg-gray-800 rounded text-sm disabled:opacity-50"
+                  className="px-3 py-1 bg-gray-800 rounded text-sm disabled:opacity-50 hover:bg-gray-700"
                 >
                   上一页
                 </button>
@@ -391,7 +426,7 @@ export default function UsersPage() {
                 <button 
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                   disabled={currentPage === totalPages}
-                  className="px-3 py-1 bg-gray-800 rounded text-sm disabled:opacity-50"
+                  className="px-3 py-1 bg-gray-800 rounded text-sm disabled:opacity-50 hover:bg-gray-700"
                 >
                   下一页
                 </button>
@@ -426,6 +461,7 @@ export default function UsersPage() {
                           setSelectedUsers([])
                         }
                       }}
+                      className="rounded border-gray-600"
                     />
                   </th>
                   <th className="text-left py-3 px-4 md:px-6 text-gray-400 font-medium text-sm">用户ID</th>
@@ -451,6 +487,7 @@ export default function UsersPage() {
                             setSelectedUsers(prev => prev.filter(id => id !== user.id))
                           }
                         }}
+                        className="rounded border-gray-600"
                       />
                     </td>
                     <td className="py-3 px-4 md:px-6">
@@ -460,9 +497,9 @@ export default function UsersPage() {
                     </td>
                     <td className="py-3 px-4 md:px-6">
                       <div className="flex items-center">
-                        {user.avatar_url ? (
+                        {user.avatarUrl ? (
                           <img 
-                            src={user.avatar_url} 
+                            src={user.avatarUrl} 
                             alt={user.nickname || user.email}
                             className="w-8 h-8 rounded-full mr-3"
                           />
@@ -486,15 +523,36 @@ export default function UsersPage() {
                       </div>
                     </td>
                     <td className="py-3 px-4 md:px-6">
-                      {/* 🔥 列表页面不显示具体密钥，提示用户查看详情 */}
-                      <div className="text-center">
-                        <span className="text-gray-500 text-sm">{user.activeKey}</span>
-                        {user.access_key_id && (
-                          <p className="text-gray-600 text-xs mt-1">
-                            密钥ID: {user.access_key_id}
-                          </p>
-                        )}
-                      </div>
+                      {user.activeKey ? (
+                        <div className="space-y-1">
+                          <div className="flex items-center">
+                            <Key className="w-3 h-3 mr-1 text-amber-400" />
+                            <code className="text-xs bg-amber-500/10 text-amber-400 px-2 py-1 rounded font-mono truncate max-w-[120px]">
+                              {user.activeKey}
+                            </code>
+                          </div>
+                          {user.activeKeyUsedAt && (
+                            <p className="text-gray-500 text-xs">
+                              使用: {new Date(user.activeKeyUsedAt).toLocaleDateString('zh-CN')}
+                            </p>
+                          )}
+                          {user.activeKeyExpires && (
+                            <p className="text-gray-500 text-xs">
+                              过期: {new Date(user.activeKeyExpires).toLocaleDateString('zh-CN')}
+                            </p>
+                          )}
+                          {user.accessKeyId && (
+                            <p className="text-gray-600 text-xs">
+                              ID: {user.accessKeyId}
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex items-center text-gray-500">
+                          <Key className="w-3 h-3 mr-1" />
+                          <span className="text-sm">无</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-4 md:px-6">
                       <div>
@@ -521,7 +579,7 @@ export default function UsersPage() {
                     <td className="py-3 px-4 md:px-6">
                       <button 
                         onClick={() => handleViewDetail(user.id)}
-                        className="text-blue-400 hover:text-blue-300 text-sm hover:underline"
+                        className="text-blue-400 hover:text-blue-300 text-sm hover:underline px-2 py-1 rounded hover:bg-gray-800"
                       >
                         查看详情
                       </button>
@@ -540,7 +598,6 @@ export default function UsersPage() {
         onClose={() => setDetailModalOpen(false)}
         userDetail={selectedUserDetail}
         loading={detailLoading}
-        onRefresh={handleRefreshDetail}
       />
     </div>
   )
