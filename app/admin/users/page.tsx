@@ -162,7 +162,7 @@ export default function UsersPage() {
           }
 
           // 获取性别
-          const gender = getGenderDisplay(profile.preferences)
+          const gender = getGenderDisplay(profile.preferences);
 
           return {
             id: profile.id,
@@ -187,9 +187,8 @@ export default function UsersPage() {
             isActive: true,
             gender: gender,
             keyStatus: keyStatus
-          }
-        })
-
+          };
+        });
       setUsers(formattedUsers)
       setTotalCount(result.pagination?.total || 0)
 
