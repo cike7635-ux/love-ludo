@@ -1,8 +1,8 @@
-// /app/admin/users/page.tsx
+// /app/admin/users/page.tsx - 完整修复版
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Users, Mail, Calendar, Shield, Search, Filter, Download, MoreVertical, Key, Brain, Gamepad2, ChevronDown } from 'lucide-react'
+import { Users, Mail, Search, Download, MoreVertical, Key, ChevronDown, Shield } from 'lucide-react'
 import UserDetailModal from './components/user-detail-modal'
 import GrowthChart from './components/growth-chart'
 import { User, UserDetail } from './types'
@@ -69,7 +69,7 @@ export default function UsersPage() {
         throw new Error(result.error || 'API返回未知错误')
       }
 
-      // 7. 转换数据格式
+      // 7. 转换数据格式 - 修复密钥显示
       const formattedUsers: User[] = (result.data || []).map((profile: any) => {
         const lastLogin = profile.last_login_at
           ? new Date(profile.last_login_at).toLocaleString('zh-CN')
@@ -83,20 +83,37 @@ export default function UsersPage() {
           ? new Date(profile.account_expires_at) > new Date()
           : false
 
-        // 🔥 修复：使用正确的字段名 access_keys（下划线命名）
-        const accessKeysArray = profile.access_keys || []
-        const currentAccessKey = profile.current_access_key || null
+        // 🔥 修复密钥获取逻辑
+        let activeKey = null
+        let activeKeyUsedAt = null
+        let activeKeyExpires = null
         
-        // 查找用户当前使用的密钥
-        let activeKeyData = null
-        if (currentAccessKey) {
-          activeKeyData = currentAccessKey
-        } else if (profile.access_key_id && accessKeysArray.length > 0) {
-          // 通过 access_key_id 查找对应的密钥
-          activeKeyData = accessKeysArray.find((key: any) => key.id === profile.access_key_id)
-        } else if (accessKeysArray.length > 0) {
-          // 如果没有指定当前密钥，使用第一个
-          activeKeyData = accessKeysArray[0]
+        // 方法1: 如果API返回了access_keys数组
+        const accessKeys = profile.access_keys || []
+        if (Array.isArray(accessKeys) && accessKeys.length > 0) {
+          // 如果有access_key_id，找对应的密钥
+          if (profile.access_key_id) {
+            const currentKey = accessKeys.find((key: any) => key.id === profile.access_key_id)
+            if (currentKey) {
+              activeKey = currentKey.key_code
+              activeKeyUsedAt = currentKey.used_at
+              activeKeyExpires = currentKey.key_expires_at
+            }
+          }
+          // 如果没有找到特定的，用第一个
+          if (!activeKey && accessKeys.length > 0) {
+            const firstKey = accessKeys[0]
+            activeKey = firstKey.key_code
+            activeKeyUsedAt = firstKey.used_at
+            activeKeyExpires = firstKey.key_expires_at
+          }
+        }
+        
+        // 方法2: 如果API返回了单独的current_access_key
+        if (!activeKey && profile.current_access_key) {
+          activeKey = profile.current_access_key.key_code
+          activeKeyUsedAt = profile.current_access_key.used_at
+          activeKeyExpires = profile.current_access_key.key_expires_at
         }
 
         return {
@@ -107,7 +124,7 @@ export default function UsersPage() {
           avatarUrl: profile.avatar_url,
           bio: profile.bio,
           preferences: profile.preferences,
-          isAdmin: profile.email === '2200691917@qq.com', // 您的管理员邮箱
+          isAdmin: profile.email === '2200691917@qq.com',
           isPremium: isPremium,
           lastLogin: lastLogin,
           lastLoginRaw: profile.last_login_at,
@@ -115,9 +132,9 @@ export default function UsersPage() {
           createdAt: createdAt,
           createdAtRaw: profile.created_at,
           accessKeyId: profile.access_key_id,
-          activeKey: activeKeyData?.key_code || null,
-          activeKeyUsedAt: activeKeyData?.used_at || null,
-          activeKeyExpires: activeKeyData?.key_expires_at || null,
+          activeKey: activeKey || (profile.access_key_id ? '需查看详情' : '无'),
+          activeKeyUsedAt: activeKeyUsedAt,
+          activeKeyExpires: activeKeyExpires,
           isActive: true
         }
       })
@@ -128,14 +145,19 @@ export default function UsersPage() {
 
     } catch (error) {
       console.error('获取用户数据失败:', error)
+      setUsers([])
+      setTotalCount(0)
     } finally {
       setLoading(false)
     }
   }, [currentPage, searchTerm, filter])
 
-  // 获取用户详情 - 通过安全API
+  // 获取用户详情
   const fetchUserDetail = async (userId: string) => {
+    console.log('🔍 开始获取用户详情:', userId)
     setDetailLoading(true)
+    setSelectedUserDetail(null)
+    
     try {
       const response = await fetch(`/api/admin/data?table=profiles&detailId=${userId}`, {
         credentials: 'include',
@@ -152,28 +174,29 @@ export default function UsersPage() {
       }
 
       const userDetail: UserDetail = {
-        id: result.data.id,
-        email: result.data.email,
-        nickname: result.data.nickname,
-        full_name: result.data.full_name,
-        avatar_url: result.data.avatar_url,
-        bio: result.data.bio,
-        preferences: result.data.preferences,
-        account_expires_at: result.data.account_expires_at,
-        last_login_at: result.data.last_login_at,
-        last_login_session: result.data.last_login_session,
-        access_key_id: result.data.access_key_id,
-        created_at: result.data.created_at,
-        updated_at: result.data.updated_at,
-        accessKeys: result.data.access_keys || [],
-        aiUsageRecords: result.data.ai_usage_records || [],
-        gameHistory: result.data.game_history || []
+        id: result.data.id || '',
+        email: result.data.email || '',
+        nickname: result.data.nickname || null,
+        full_name: result.data.full_name || null,
+        avatar_url: result.data.avatar_url || null,
+        bio: result.data.bio || null,
+        preferences: result.data.preferences || {},
+        account_expires_at: result.data.account_expires_at || null,
+        last_login_at: result.data.last_login_at || null,
+        last_login_session: result.data.last_login_session || null,
+        access_key_id: result.data.access_key_id || null,
+        created_at: result.data.created_at || '',
+        updated_at: result.data.updated_at || '',
+        access_keys: result.data.access_keys || [],
+        ai_usage_records: result.data.ai_usage_records || [],
+        game_history: result.data.game_history || []
       }
 
       setSelectedUserDetail(userDetail)
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('获取用户详情失败:', error)
+      setSelectedUserDetail(null)
     } finally {
       setDetailLoading(false)
     }
@@ -266,6 +289,64 @@ export default function UsersPage() {
   const handleViewDetail = async (userId: string) => {
     await fetchUserDetail(userId)
     setDetailModalOpen(true)
+  }
+
+  // 刷新详情数据
+  const handleRefreshDetail = useCallback(async () => {
+    if (selectedUserDetail?.id) {
+      await fetchUserDetail(selectedUserDetail.id)
+    }
+  }, [selectedUserDetail])
+
+  // 渲染密钥单元格
+  const renderKeyCell = (user: User) => {
+    if (!user.activeKey || user.activeKey === '无') {
+      return (
+        <div className="flex items-center text-gray-500">
+          <Key className="w-3 h-3 mr-1" />
+          <span className="text-sm">无</span>
+        </div>
+      )
+    }
+    
+    if (user.activeKey === '需查看详情') {
+      return (
+        <div className="text-center">
+          <span className="text-blue-400 text-sm">{user.activeKey}</span>
+          {user.accessKeyId && (
+            <p className="text-gray-600 text-xs mt-1">
+              密钥ID: {user.accessKeyId}
+            </p>
+          )}
+        </div>
+      )
+    }
+    
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center">
+          <Key className="w-3 h-3 mr-1 text-amber-400" />
+          <code className="text-xs bg-amber-500/10 text-amber-400 px-2 py-1 rounded font-mono truncate max-w-[120px]">
+            {user.activeKey}
+          </code>
+        </div>
+        {user.activeKeyUsedAt && (
+          <p className="text-gray-500 text-xs">
+            使用: {new Date(user.activeKeyUsedAt).toLocaleDateString('zh-CN')}
+          </p>
+        )}
+        {user.activeKeyExpires && (
+          <p className="text-gray-500 text-xs">
+            过期: {new Date(user.activeKeyExpires).toLocaleDateString('zh-CN')}
+          </p>
+        )}
+        {user.accessKeyId && (
+          <p className="text-gray-600 text-xs">
+            ID: {user.accessKeyId}
+          </p>
+        )}
+      </div>
+    )
   }
 
   return (
@@ -523,36 +604,7 @@ export default function UsersPage() {
                       </div>
                     </td>
                     <td className="py-3 px-4 md:px-6">
-                      {user.activeKey ? (
-                        <div className="space-y-1">
-                          <div className="flex items-center">
-                            <Key className="w-3 h-3 mr-1 text-amber-400" />
-                            <code className="text-xs bg-amber-500/10 text-amber-400 px-2 py-1 rounded font-mono truncate max-w-[120px]">
-                              {user.activeKey}
-                            </code>
-                          </div>
-                          {user.activeKeyUsedAt && (
-                            <p className="text-gray-500 text-xs">
-                              使用: {new Date(user.activeKeyUsedAt).toLocaleDateString('zh-CN')}
-                            </p>
-                          )}
-                          {user.activeKeyExpires && (
-                            <p className="text-gray-500 text-xs">
-                              过期: {new Date(user.activeKeyExpires).toLocaleDateString('zh-CN')}
-                            </p>
-                          )}
-                          {user.accessKeyId && (
-                            <p className="text-gray-600 text-xs">
-                              ID: {user.accessKeyId}
-                            </p>
-                          )}
-                        </div>
-                      ) : (
-                        <div className="flex items-center text-gray-500">
-                          <Key className="w-3 h-3 mr-1" />
-                          <span className="text-sm">无</span>
-                        </div>
-                      )}
+                      {renderKeyCell(user)}
                     </td>
                     <td className="py-3 px-4 md:px-6">
                       <div>
@@ -598,6 +650,7 @@ export default function UsersPage() {
         onClose={() => setDetailModalOpen(false)}
         userDetail={selectedUserDetail}
         loading={detailLoading}
+        onRefresh={handleRefreshDetail}
       />
     </div>
   )
