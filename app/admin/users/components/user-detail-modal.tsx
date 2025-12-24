@@ -1,4 +1,4 @@
-// /app/admin/users/components/user-detail-modal.tsx - 完整优化版本
+// /app/admin/users/components/user-detail-modal.tsx - 去除了 date-fns 依赖的简化版本
 'use client'
 
 import { 
@@ -9,8 +9,6 @@ import {
 } from 'lucide-react'
 import { UserDetail, normalizeUserDetail, AccessKey, AiUsageRecord, GameHistory } from '../types'
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { format, formatDistance, formatRelative, isAfter, isBefore, parseISO } from 'date-fns'
-import { zhCN } from 'date-fns/locale'
 
 interface UserDetailModalProps {
   isOpen: boolean
@@ -21,6 +19,136 @@ interface UserDetailModalProps {
 }
 
 type TabType = 'info' | 'keys' | 'ai' | 'games' | 'debug'
+
+// 日期格式化工具函数（不需要 date-fns）
+const formatDateTime = (dateString: string | null): string => {
+  if (!dateString) return '无记录'
+  try {
+    const date = new Date(dateString)
+    if (isNaN(date.getTime())) return '格式错误'
+    
+    // 格式: 2024-12-23 14:30:45
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    const hours = String(date.getHours()).padStart(2, '0')
+    const minutes = String(date.getMinutes()).padStart(2, '0')
+    const seconds = String(date.getSeconds()).padStart(2, '0')
+    
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`
+  } catch (error) {
+    return '格式错误'
+  }
+}
+
+const formatDateOnly = (dateString: string | null): string => {
+  if (!dateString) return '无记录'
+  try {
+    const date = new Date(dateString)
+    if (isNaN(date.getTime())) return '格式错误'
+    
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    
+    return `${year}-${month}-${day}`
+  } catch (error) {
+    return '格式错误'
+  }
+}
+
+const formatRelativeTime = (dateString: string | null): string => {
+  if (!dateString) return '从未'
+  try {
+    const date = new Date(dateString)
+    if (isNaN(date.getTime())) return '未知'
+    
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffSeconds = Math.floor(diffMs / 1000)
+    const diffMinutes = Math.floor(diffSeconds / 60)
+    const diffHours = Math.floor(diffMinutes / 60)
+    const diffDays = Math.floor(diffHours / 24)
+    
+    if (diffSeconds < 60) return '刚刚'
+    if (diffMinutes < 60) return `${diffMinutes}分钟前`
+    if (diffHours < 24) return `${diffHours}小时前`
+    if (diffDays < 7) return `${diffDays}天前`
+    
+    return formatDateOnly(dateString)
+  } catch (error) {
+    return '未知'
+  }
+}
+
+const formatDuration = (dateString: string | null): string => {
+  if (!dateString) return '从未'
+  try {
+    const date = new Date(dateString)
+    if (isNaN(date.getTime())) return '未知'
+    
+    const now = new Date()
+    const diffMs = now.getTime() - date.getTime()
+    const diffSeconds = Math.floor(diffMs / 1000)
+    const diffMinutes = Math.floor(diffSeconds / 60)
+    const diffHours = Math.floor(diffMinutes / 60)
+    const diffDays = Math.floor(diffHours / 24)
+    
+    if (diffSeconds < 60) return `${diffSeconds}秒前`
+    if (diffMinutes < 60) return `${diffMinutes}分钟前`
+    if (diffHours < 24) return `${diffHours}小时前`
+    if (diffDays < 30) return `${diffDays}天前`
+    
+    const diffMonths = Math.floor(diffDays / 30)
+    if (diffMonths < 12) return `${diffMonths}个月前`
+    
+    const diffYears = Math.floor(diffMonths / 12)
+    return `${diffYears}年前`
+  } catch (error) {
+    return '未知'
+  }
+}
+
+// 计算日期差（天）
+const calculateDaysDifference = (dateString1: string | null, dateString2: string | null = null): number => {
+  try {
+    const date1 = dateString1 ? new Date(dateString1) : new Date()
+    const date2 = dateString2 ? new Date(dateString2) : new Date()
+    
+    if (isNaN(date1.getTime()) || isNaN(date2.getTime())) return 0
+    
+    const diffMs = Math.abs(date2.getTime() - date1.getTime())
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24))
+  } catch (error) {
+    return 0
+  }
+}
+
+// 判断日期是否在另一个日期之后
+const isAfter = (dateString1: string | null, dateString2: string | null): boolean => {
+  try {
+    const date1 = dateString1 ? new Date(dateString1) : null
+    const date2 = dateString2 ? new Date(dateString2) : null
+    
+    if (!date1 || !date2 || isNaN(date1.getTime()) || isNaN(date2.getTime())) return false
+    return date1.getTime() > date2.getTime()
+  } catch (error) {
+    return false
+  }
+}
+
+// 判断日期是否在另一个日期之前
+const isBefore = (dateString1: string | null, dateString2: string | null): boolean => {
+  try {
+    const date1 = dateString1 ? new Date(dateString1) : null
+    const date2 = dateString2 ? new Date(dateString2) : null
+    
+    if (!date1 || !date2 || isNaN(date1.getTime()) || isNaN(date2.getTime())) return false
+    return date1.getTime() < date2.getTime()
+  } catch (error) {
+    return false
+  }
+}
 
 export default function UserDetailModal({ 
   isOpen, 
@@ -69,17 +197,17 @@ export default function UserDetailModal({
     const now = new Date()
     
     // 会员状态
-    const expiresAt = userDetail.accountExpiresAt ? parseISO(userDetail.accountExpiresAt) : null
-    const isPremiumUser = expiresAt ? isAfter(expiresAt, now) : false
-    const daysRemaining = expiresAt ? Math.max(0, Math.ceil((expiresAt.getTime() - now.getTime()) / (1000 * 60 * 60 * 24))) : 0
+    const expiresAt = userDetail.accountExpiresAt
+    const isPremiumUser = expiresAt ? isAfter(expiresAt, now.toISOString()) : false
+    const daysRemaining = expiresAt ? calculateDaysDifference(expiresAt, now.toISOString()) : 0
     
     // 注册时间
-    const createdAt = userDetail.createdAt ? parseISO(userDetail.createdAt) : null
-    const memberSinceDays = createdAt ? Math.ceil((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24)) : 0
+    const createdAt = userDetail.createdAt
+    const memberSinceDays = createdAt ? calculateDaysDifference(createdAt, now.toISOString()) : 0
     
     // 最后活跃
-    const lastLoginAt = userDetail.lastLoginAt ? parseISO(userDetail.lastLoginAt) : null
-    const lastActiveDays = lastLoginAt ? Math.ceil((now.getTime() - lastLoginAt.getTime()) / (1000 * 60 * 60 * 24)) : -1
+    const lastLoginAt = userDetail.lastLoginAt
+    const lastActiveDays = lastLoginAt ? calculateDaysDifference(lastLoginAt, now.toISOString()) : -1
 
     // 游戏统计
     const games = userDetail.gameHistory || []
@@ -92,7 +220,7 @@ export default function UserDetailModal({
     // 密钥统计
     const keys = userDetail.accessKeys || []
     const activeKeys = keys.filter(k => k.isActive).length
-    const expiredKeys = keys.filter(k => k.keyExpiresAt && isBefore(parseISO(k.keyExpiresAt), now)).length
+    const expiredKeys = keys.filter(k => k.keyExpiresAt && isBefore(k.keyExpiresAt, now.toISOString())).length
     const usedKeys = keys.filter(k => k.usedAt).length
 
     // AI统计
@@ -177,34 +305,6 @@ export default function UserDetailModal({
     
     return () => clearInterval(interval)
   }, [autoRefresh, onRefresh])
-
-  // 格式化工具函数
-  const formatDateTime = useCallback((dateString: string | null) => {
-    if (!dateString) return '无记录'
-    try {
-      return format(parseISO(dateString), 'yyyy-MM-dd HH:mm:ss', { locale: zhCN })
-    } catch {
-      return '格式错误'
-    }
-  }, [])
-
-  const formatRelativeTime = useCallback((dateString: string | null) => {
-    if (!dateString) return '从未'
-    try {
-      return formatRelative(parseISO(dateString), new Date(), { locale: zhCN })
-    } catch {
-      return '未知'
-    }
-  }, [])
-
-  const formatDuration = useCallback((dateString: string | null) => {
-    if (!dateString) return '未知'
-    try {
-      return formatDistance(parseISO(dateString), new Date(), { locale: zhCN, addSuffix: true })
-    } catch {
-      return '未知'
-    }
-  }, [])
 
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard.writeText(text).then(() => {
@@ -509,7 +609,7 @@ export default function UserDetailModal({
             const currentKey = userDetail.accessKeys.find(k => k.id === userDetail.accessKeyId)
             if (!currentKey) return null
             
-            const isExpired = currentKey.keyExpiresAt && isBefore(parseISO(currentKey.keyExpiresAt), new Date())
+            const isExpired = currentKey.keyExpiresAt && isBefore(currentKey.keyExpiresAt, new Date().toISOString())
             
             return (
               <div className={`bg-gradient-to-r ${isExpired ? 'from-red-900/20 to-red-800/10 border-red-700/30' : 'from-amber-900/20 to-amber-800/10 border-amber-700/30'} rounded-lg p-4 border`}>
@@ -664,7 +764,7 @@ export default function UserDetailModal({
               <tbody>
                 {userDetail.accessKeys.map((key: AccessKey, index: number) => {
                   const isCurrentKey = key.id === userDetail.accessKeyId
-                  const isExpired = key.keyExpiresAt && isBefore(parseISO(key.keyExpiresAt), new Date())
+                  const isExpired = key.keyExpiresAt && isBefore(key.keyExpiresAt, new Date().toISOString())
                   const isUsed = !!key.usedAt
                   
                   return (
@@ -728,7 +828,7 @@ export default function UserDetailModal({
                           </span>
                           {key.keyExpiresAt && (
                             <span className="text-gray-500 text-xs">
-                              {isExpired ? '已过期' : `剩余${Math.ceil((parseISO(key.keyExpiresAt).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))}天`}
+                              {isExpired ? '已过期' : `剩余${calculateDaysDifference(key.keyExpiresAt, new Date().toISOString())}天`}
                             </span>
                           )}
                         </div>
@@ -987,8 +1087,8 @@ export default function UserDetailModal({
                   let duration = '未知'
                   if (game.startedAt && game.endedAt) {
                     try {
-                      const start = parseISO(game.startedAt)
-                      const end = parseISO(game.endedAt)
+                      const start = new Date(game.startedAt)
+                      const end = new Date(game.endedAt)
                       const minutes = Math.round((end.getTime() - start.getTime()) / (1000 * 60))
                       duration = minutes > 60 
                         ? `${Math.floor(minutes / 60)}小时${minutes % 60}分钟` 
