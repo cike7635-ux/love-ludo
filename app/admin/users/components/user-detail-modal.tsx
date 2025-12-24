@@ -21,6 +21,7 @@ const getGenderDisplay = (preferences: any): string => {
     'male': '男',
     'female': '女',
     'other': '其他',
+    'non_binary': '非二元',
     'M': '男',
     'F': '女',
     '男': '男',
@@ -227,8 +228,8 @@ export default function UserDetailModal({ isOpen, onClose, userDetail, loading, 
                   <button
                     key={tab.id}
                     className={`flex-1 flex items-center justify-center px-6 py-3 text-sm font-medium transition-all relative ${activeTab === tab.id
-                        ? 'text-blue-400 border-b-2 border-blue-500 bg-gradient-to-t from-blue-500/5 to-transparent'
-                        : 'text-gray-400 hover:text-gray-300 hover:bg-gray-800/30'
+                      ? 'text-blue-400 border-b-2 border-blue-500 bg-gradient-to-t from-blue-500/5 to-transparent'
+                      : 'text-gray-400 hover:text-gray-300 hover:bg-gray-800/30'
                       }`}
                     onClick={() => setActiveTab(tab.id as any)}
                   >
@@ -236,8 +237,8 @@ export default function UserDetailModal({ isOpen, onClose, userDetail, loading, 
                     {tab.label}
                     {tab.count !== null && (
                       <span className={`ml-2 px-1.5 py-0.5 text-xs rounded-full ${activeTab === tab.id
-                          ? 'bg-blue-500/20 text-blue-400'
-                          : 'bg-gray-700 text-gray-400'
+                        ? 'bg-blue-500/20 text-blue-400'
+                        : 'bg-gray-700 text-gray-400'
                         }`}>
                         {tab.count}
                       </span>
@@ -600,8 +601,8 @@ export default function UserDetailModal({ isOpen, onClose, userDetail, loading, 
                               <div>
                                 <span className="text-white font-medium">{record.feature || '未知功能'}</span>
                                 <span className={`ml-3 px-2 py-1 rounded text-xs ${record.success
-                                    ? 'bg-green-500/20 text-green-400'
-                                    : 'bg-red-500/20 text-red-400'
+                                  ? 'bg-green-500/20 text-green-400'
+                                  : 'bg-red-500/20 text-red-400'
                                   }`}>
                                   {record.success ? '成功' : '失败'}
                                 </span>

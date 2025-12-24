@@ -52,7 +52,7 @@ export type SortDirection = 'asc' | 'desc'
 // 性别显示函数
 export function getGenderDisplay(preferences: any): string {
   if (!preferences || !preferences.gender) return '未设置';
-  
+
   const genderMap: Record<string, string> = {
     'male': '男',
     'female': '女',
@@ -68,27 +68,35 @@ export function getGenderDisplay(preferences: any): string {
     null: '未设置',
     undefined: '未设置'
   };
-  
+
   const genderKey = String(preferences.gender).toLowerCase();
   return genderMap[genderKey] || String(preferences.gender);
 }
 
 // 获取密钥状态
-export function getKeyStatus(key: any): 'active' | 'expired' | 'unused' {
+export function getKeyStatus(key: any): 'active' | 'expired' | 'unused' | 'inactive' {
   if (!key) return 'unused';
-  
+
+  // 1. 首先检查是否激活
+  if (key.is_active === false) return 'inactive'; // 被管理员手动禁用
+
+  // 2. 检查是否过期
   const isExpired = key.key_expires_at && new Date(key.key_expires_at) < new Date();
-  const isUsed = key.used_at;
-  
   if (isExpired) return 'expired';
-  if (isUsed) return 'active';
+
+  // 3. 检查是否已使用（如果有 used_at 字段）
+  if (key.used_at) return 'active';
+
+  // 4. 如果密钥关联了用户（user_id 不为空），则认为已激活
+  if (key.user_id) return 'active';
+
+  // 5. 默认情况
   return 'unused';
 }
-
 // 归一化用户详情数据
 export function normalizeUserDetail(data: any): UserDetail {
   if (!data) return {} as UserDetail;
-  
+
   // 智能检测字段名
   const accessKeysData = []
   if (data.access_keys && Array.isArray(data.access_keys)) {
@@ -96,21 +104,21 @@ export function normalizeUserDetail(data: any): UserDetail {
   } else if (data.accessKeys && Array.isArray(data.accessKeys)) {
     accessKeysData.push(...data.accessKeys)
   }
-  
+
   const aiRecordsData = []
   if (data.ai_usage_records && Array.isArray(data.ai_usage_records)) {
     aiRecordsData.push(...data.ai_usage_records)
   } else if (data.aiUsageRecords && Array.isArray(data.aiUsageRecords)) {
     aiRecordsData.push(...data.aiUsageRecords)
   }
-  
+
   const gameHistoryData = []
   if (data.game_history && Array.isArray(data.game_history)) {
     gameHistoryData.push(...data.game_history)
   } else if (data.gameHistory && Array.isArray(data.gameHistory)) {
     gameHistoryData.push(...data.gameHistory)
   }
-  
+
   return {
     id: data.id || '',
     email: data.email || '',

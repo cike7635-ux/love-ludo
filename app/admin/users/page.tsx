@@ -421,7 +421,8 @@ export default function UsersPage() {
     fetchUsers()
   }, [fetchUsers])
 
-  // 渲染密钥单元格 - 直接显示密钥，去掉悬浮提示
+
+  // 渲染密钥单元格 - 显示密钥代码和正确状态
   const renderKeyCell = (user: UserType) => {
     if (!user.activeKey || user.activeKey === '无') {
       return (
@@ -438,25 +439,30 @@ export default function UsersPage() {
       displayKey = displayKey.replace('ID: ', '');
     }
 
-    const keyStatusColors = {
-      active: 'bg-green-500/10 text-green-400',
-      expired: 'bg-red-500/10 text-red-400',
-      unused: 'bg-yellow-500/10 text-yellow-400'
+    // 根据状态显示不同颜色
+    const statusConfig = {
+      active: { label: '已激活', color: 'bg-green-500/10 text-green-400', iconColor: 'text-green-400' },
+      expired: { label: '已过期', color: 'bg-red-500/10 text-red-400', iconColor: 'text-red-400' },
+      inactive: { label: '已禁用', color: 'bg-gray-500/10 text-gray-400', iconColor: 'text-gray-400' },
+      unused: { label: '未使用', color: 'bg-yellow-500/10 text-yellow-400', iconColor: 'text-yellow-400' }
     };
+
+    const status = user.keyStatus || 'unused';
+    const config = statusConfig[status] || statusConfig.unused;
 
     // 检查是否是有效的密钥代码（包含破折号）
     const isValidKeyCode = displayKey.includes('-');
 
     return (
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         <div className="flex items-center">
-          <Key className="w-3 h-3 mr-1 text-amber-400" />
+          <Key className={`w-3.5 h-3.5 mr-2 ${config.iconColor}`} />
           <code
-            className={`text-xs px-2 py-1 rounded font-mono truncate max-w-[120px] hover:opacity-80 transition-opacity ${isValidKeyCode
-              ? 'bg-amber-500/10 text-amber-400'
-              : 'bg-blue-500/10 text-blue-400'
+            className={`text-sm px-2.5 py-1.5 rounded font-mono truncate max-w-[120px] hover:opacity-90 transition-opacity cursor-pointer ${isValidKeyCode
+                ? 'bg-gray-800 text-gray-200 border border-gray-700'
+                : 'bg-blue-500/10 text-blue-400'
               }`}
-            title={isValidKeyCode ? `密钥: ${displayKey}` : `密钥ID: ${displayKey}`}
+            title={`密钥: ${displayKey} (${config.label})`}
             onClick={(e) => {
               e.stopPropagation();
               navigator.clipboard.writeText(displayKey || '');
@@ -467,11 +473,11 @@ export default function UsersPage() {
           </code>
         </div>
         <div className="flex items-center justify-between">
-          <span className={`text-xs px-1.5 py-0.5 rounded ${keyStatusColors[user.keyStatus || 'unused']}`}>
-            {user.keyStatus === 'active' ? '已使用' : user.keyStatus === 'expired' ? '已过期' : '未使用'}
+          <span className={`text-xs px-2 py-1 rounded-full ${config.color} font-medium`}>
+            {config.label}
           </span>
           {user.accessKeyId && (
-            <span className="text-gray-600 text-xs">关联ID: {user.accessKeyId}</span>
+            <span className="text-gray-600 text-xs">ID: {user.accessKeyId}</span>
           )}
         </div>
       </div>
