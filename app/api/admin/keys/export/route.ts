@@ -1,7 +1,43 @@
 // /app/api/admin/keys/export/route.ts
 import { createClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
-import { stringify } from 'csv-stringify/sync'
+
+// 手动生成CSV函数（不需要第三方依赖）
+function generateCSV(data: any[]): string {
+  if (!data || data.length === 0) {
+    return ''
+  }
+
+  // 获取表头
+  const headers = Object.keys(data[0])
+  const csvRows = []
+
+  // 添加表头
+  csvRows.push(headers.map(header => `"${header}"`).join(','))
+
+  // 添加数据行
+  for (const row of data) {
+    const values = headers.map(header => {
+      let value = row[header]
+      
+      // 处理特殊字符
+      if (value === null || value === undefined) {
+        value = ''
+      } else if (typeof value === 'string') {
+        // 转义引号和逗号
+        if (value.includes('"') || value.includes(',') || value.includes('\n')) {
+          value = `"${value.replace(/"/g, '""')}"`
+        }
+      }
+      
+      return value
+    })
+    
+    csvRows.push(values.join(','))
+  }
+
+  return csvRows.join('\n')
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -153,12 +189,8 @@ export async function POST(request: NextRequest) {
         }
       })
 
-      fileContent = stringify(csvData, {
-        header: true,
-        columns: include_columns.length > 0 
-          ? include_columns 
-          : Object.keys(csvData[0] || {})
-      })
+      // 使用我们自己的generateCSV函数
+      fileContent = generateCSV(csvData)
       
       // 添加BOM以支持Excel中文
       fileContent = '\uFEFF' + fileContent
