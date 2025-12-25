@@ -6,7 +6,7 @@ export async function GET(request: NextRequest) {
   try {
     console.log('📊 获取密钥统计信息')
     
-    // 1. 验证管理员权限
+    // 验证管理员权限
     const authMethods = {
       cookie: request.cookies.get('admin_key_verified')?.value,
       referer: request.headers.get('referer'),
@@ -17,250 +17,166 @@ export async function GET(request: NextRequest) {
       (authMethods.referer?.includes('/admin/') && authMethods.userAgent)
 
     if (!isAuthenticated) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '未授权访问' 
-      }, { status: 401 })
+      return NextResponse.json({ success: false, error: '未授权访问' }, { status: 401 })
     }
 
-    // 2. 验证环境变量
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      return NextResponse.json({ 
-        success: false, 
-        error: '环境变量未配置' 
-      }, { status: 500 })
-    }
-
-    // 3. 创建Supabase管理员客户端
     const supabaseAdmin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.SUPABASE_SERVICE_ROLE_KEY,
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
       { auth: { persistSession: false } }
     )
 
+    // 获取当前时间
     const now = new Date()
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const yesterday = new Date(today)
     yesterday.setDate(yesterday.getDate() - 1)
     
-    const thisWeek = new Date(today)
-    thisWeek.setDate(thisWeek.getDate() - 7)
+    const sevenDaysAgo = new Date(today)
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
     
-    const thisMonth = new Date(today)
-    thisMonth.setMonth(thisMonth.getMonth() - 1)
+    const thirtyDaysAgo = new Date(today)
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-    // 4. 查询所有密钥
-    const { data: allKeys, error: keysError } = await supabaseAdmin
+    // 1. 获取基础统计
+    const { data: keys, error: keysError } = await supabaseAdmin
       .from('access_keys')
-      .select('*')
+      .select('is_active, used_at, user_id, key_expires_at, created_at, original_duration_hours, account_valid_for_days')
 
     if (keysError) {
       throw new Error('查询密钥失败: ' + keysError.message)
     }
 
-    // 5. 查询使用历史
-    const { data: usageHistory, error: usageError } = await supabaseAdmin
+    // 2. 获取今日新增密钥
+    const { data: todayKeys, error: todayError } = await supabaseAdmin
+      .from('access_keys')
+      .select('id')
+      .gte('created_at', today.toISOString())
+      .lt('created_at', new Date(today.getTime() + 24 * 60 * 60 * 1000).toISOString())
+
+    // 3. 获取昨日新增密钥
+    const { data: yesterdayKeys, error: yesterdayError } = await supabaseAdmin
+      .from('access_keys')
+      .select('id')
+      .gte('created_at', yesterday.toISOString())
+      .lt('created_at', today.toISOString())
+
+    // 4. 获取使用统计
+    const { data: usageStats, error: usageError } = await supabaseAdmin
       .from('key_usage_history')
-      .select('*')
+      .select('used_at, user_id, access_key_id')
 
-    if (usageError) {
-      console.warn('查询使用历史失败，继续统计:', usageError.message)
-    }
+    // 计算统计数据
+    const totalKeys = keys?.length || 0
+    const activeKeys = keys?.filter(k => k.is_active && (!k.key_expires_at || new Date(k.key_expires_at) > now)).length || 0
+    const usedKeys = keys?.filter(k => k.used_at !== null || k.user_id !== null).length || 0
+    const unusedKeys = keys?.filter(k => k.used_at === null && k.user_id === null && k.is_active).length || 0
+    const expiredKeys = keys?.filter(k => k.key_expires_at && new Date(k.key_expires_at) < now).length || 0
+    const inactiveKeys = keys?.filter(k => !k.is_active).length || 0
 
-    // 6. 计算统计信息
-    const keys = allKeys || []
-    const history = usageHistory || []
-    const nowTime = now.getTime()
-
-    // 6.1 基础统计
-    const totalKeys = keys.length
-    const activeKeys = keys.filter(k => k.is_active).length
-    const expiredKeys = keys.filter(k => 
-      k.key_expires_at && new Date(k.key_expires_at).getTime() < nowTime
-    ).length
-    const disabledKeys = keys.filter(k => !k.is_active).length
-    
-    // 6.2 使用统计
-    const usedKeys = keys.filter(k => k.used_at || history.some(h => h.access_key_id === k.id)).length
-    const unusedKeys = keys.filter(k => !k.used_at && !history.some(h => h.access_key_id === k.id)).length
-    
-    // 6.3 使用次数统计
-    const totalUses = history.length
-    const uniqueUsers = new Set(history.map(h => h.user_id)).size
-    
-    // 6.4 时间统计
-    const todayExpiring = keys.filter(k => {
+    // 计算今日过期和即将过期
+    const todayExpiring = keys?.filter(k => {
       if (!k.key_expires_at) return false
       const expiry = new Date(k.key_expires_at)
       return expiry.toDateString() === today.toDateString()
-    }).length
+    }).length || 0
 
-    const nearExpiring = keys.filter(k => {
+    const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    const nearExpiring = keys?.filter(k => {
       if (!k.key_expires_at) return false
       const expiry = new Date(k.key_expires_at)
-      const sevenDaysLater = new Date(today)
-      sevenDaysLater.setDate(sevenDaysLater.getDate() + 7)
-      return expiry > today && expiry <= sevenDaysLater
-    }).length
+      return expiry > now && expiry <= sevenDaysLater
+    }).length || 0
 
-    // 6.5 新增统计
-    const todayNew = keys.filter(k => 
-      new Date(k.created_at).toDateString() === today.toDateString()
-    ).length
-
-    const yesterdayNew = keys.filter(k => 
-      new Date(k.created_at).toDateString() === yesterday.toDateString()
-    ).length
-
-    const weekNew = keys.filter(k => 
-      new Date(k.created_at) >= thisWeek
-    ).length
-
-    const monthNew = keys.filter(k => 
-      new Date(k.created_at) >= thisMonth
-    ).length
-
-    // 6.6 使用统计（时间维度）
-    const todayUses = history.filter(h => 
-      new Date(h.used_at).toDateString() === today.toDateString()
-    ).length
-
-    const yesterdayUses = history.filter(h => 
-      new Date(h.used_at).toDateString() === yesterday.toDateString()
-    ).length
-
-    const weekUses = history.filter(h => 
-      new Date(h.used_at) >= thisWeek
-    ).length
-
-    const monthUses = history.filter(h => 
-      new Date(h.used_at) >= thisMonth
-    ).length
-
-    // 6.7 有效期分布
-    const durationDistribution = {
-      '1小时': keys.filter(k => k.original_duration_hours === 1).length,
-      '2小时': keys.filter(k => k.original_duration_hours === 2).length,
-      '4小时': keys.filter(k => k.original_duration_hours === 4).length,
-      '12小时': keys.filter(k => k.original_duration_hours === 12).length,
-      '1天': keys.filter(k => k.account_valid_for_days === 1).length,
-      '7天': keys.filter(k => k.account_valid_for_days === 7).length,
-      '30天': keys.filter(k => k.account_valid_for_days === 30).length,
-      '90天': keys.filter(k => k.account_valid_for_days === 90).length,
-      '180天': keys.filter(k => k.account_valid_for_days === 180).length,
-      '365天': keys.filter(k => k.account_valid_for_days === 365).length,
-      '其他': keys.filter(k => 
-        !([1, 2, 4, 12].includes(k.original_duration_hours) || 
-          [1, 7, 30, 90, 180, 365].includes(k.account_valid_for_days))
-      ).length
+    // 计算时长分布
+    const durationDistribution: Record<string, number> = {
+      '1小时': 0,
+      '2小时': 0,
+      '4小时': 0,
+      '12小时': 0,
+      '1天': 0,
+      '7天': 0,
+      '30天': 0,
+      '90天': 0,
+      '180天': 0,
+      '365天': 0,
+      '其他': 0
     }
 
-    // 6.8 使用类型分布
-    const usageTypeDistribution = history.reduce((acc, record) => {
-      acc[record.usage_type] = (acc[record.usage_type] || 0) + 1
-      return acc
-    }, {} as Record<string, number>)
-
-    // 6.9 热门密钥（使用次数最多的）
-    const keyUsageCount = history.reduce((acc, record) => {
-      acc[record.access_key_id] = (acc[record.access_key_id] || 0) + 1
-      return acc
-    }, {} as Record<number, number>)
-
-    const topKeys = Object.entries(keyUsageCount)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 10)
-      .map(([keyId, count]) => {
-        const key = keys.find(k => k.id === parseInt(keyId))
-        return {
-          key_id: keyId,
-          key_code: key?.key_code,
-          usage_count: count,
-          last_used: history
-            .filter(h => h.access_key_id === parseInt(keyId))
-            .sort((a, b) => new Date(b.used_at).getTime() - new Date(a.used_at).getTime())[0]?.used_at
-        }
-      })
-
-    // 7. 构建响应
-    const response = {
-      overview: {
-        total_keys: totalKeys,
-        active_keys: activeKeys,
-        used_keys: usedKeys,
-        unused_keys: unusedKeys,
-        expired_keys: expiredKeys,
-        disabled_keys: disabledKeys,
-        today_expiring: todayExpiring,
-        near_expiring: nearExpiring
-      },
+    keys?.forEach(key => {
+      const hours = key.original_duration_hours || (key.account_valid_for_days * 24)
       
-      growth: {
-        today: todayNew,
-        yesterday: yesterdayNew,
-        week: weekNew,
-        month: monthNew,
-        daily_growth: yesterdayNew > 0 ? 
-          Math.round(((todayNew - yesterdayNew) / yesterdayNew) * 100) : 0
-      },
-      
-      usage: {
-        total_uses: totalUses,
-        unique_users: uniqueUsers,
-        today: todayUses,
-        yesterday: yesterdayUses,
-        week: weekUses,
-        month: monthUses,
-        avg_uses_per_key: totalKeys > 0 ? Math.round((totalUses / totalKeys) * 100) / 100 : 0,
-        usage_rate: totalKeys > 0 ? Math.round((usedKeys / totalKeys) * 100) : 0
-      },
-      
-      distribution: {
-        duration: durationDistribution,
-        usage_type: usageTypeDistribution
-      },
-      
-      top_keys: topKeys,
-      
-      trends: {
-        daily_usage: {
-          today: todayUses,
-          yesterday: yesterdayUses,
-          change: yesterdayUses > 0 ? 
-            Math.round(((todayUses - yesterdayUses) / yesterdayUses) * 100) : 0
-        },
-        daily_new_keys: {
-          today: todayNew,
-          yesterday: yesterdayNew,
-          change: yesterdayNew > 0 ? 
-            Math.round(((todayNew - yesterdayNew) / yesterdayNew) * 100) : 0
-        }
-      },
-      
-      timestamps: {
-        generated_at: now.toISOString(),
-        period: {
-          today: today.toISOString(),
-          yesterday: yesterday.toISOString(),
-          week_start: thisWeek.toISOString(),
-          month_start: thisMonth.toISOString()
-        }
-      }
-    }
-
-    console.log(`✅ 统计信息生成完成，共 ${totalKeys} 个密钥，${totalUses} 次使用`)
-
-    return NextResponse.json({
-      success: true,
-      data: response,
-      timestamp: now.toISOString()
+      if (hours === 1) durationDistribution['1小时']++
+      else if (hours === 2) durationDistribution['2小时']++
+      else if (hours === 4) durationDistribution['4小时']++
+      else if (hours === 12) durationDistribution['12小时']++
+      else if (hours === 24) durationDistribution['1天']++
+      else if (hours === 24 * 7) durationDistribution['7天']++
+      else if (hours === 24 * 30) durationDistribution['30天']++
+      else if (hours === 24 * 90) durationDistribution['90天']++
+      else if (hours === 24 * 180) durationDistribution['180天']++
+      else if (hours === 24 * 365) durationDistribution['365天']++
+      else durationDistribution['其他']++
     })
 
+    // 计算使用统计
+    const totalUses = usageStats?.length || 0
+    const uniqueUsers = new Set(usageStats?.map(u => u.user_id) || []).size
+    const usageRate = totalKeys > 0 ? (usedKeys / totalKeys * 100).toFixed(1) : '0'
+
+    // 计算增长统计
+    const todayNew = todayKeys?.length || 0
+    const yesterdayNew = yesterdayKeys?.length || 0
+    const dailyGrowth = yesterdayNew > 0 
+      ? (((todayNew - yesterdayNew) / yesterdayNew) * 100).toFixed(1)
+      : '0'
+
+    const response = {
+      success: true,
+      data: {
+        overview: {
+          total_keys: totalKeys,
+          active_keys: activeKeys,
+          used_keys: usedKeys,
+          unused_keys: unusedKeys,
+          expired_keys: expiredKeys,
+          disabled_keys: inactiveKeys,
+          today_expiring: todayExpiring,
+          near_expiring: nearExpiring
+        },
+        growth: {
+          today: todayNew,
+          yesterday: yesterdayNew,
+          daily_growth: dailyGrowth,
+          week: keys?.filter(k => new Date(k.created_at) >= sevenDaysAgo).length || 0,
+          month: keys?.filter(k => new Date(k.created_at) >= thirtyDaysAgo).length || 0
+        },
+        usage: {
+          total_uses: totalUses,
+          unique_users: uniqueUsers,
+          usage_rate: usageRate,
+          avg_uses_per_key: totalKeys > 0 ? (totalUses / totalKeys).toFixed(2) : '0'
+        },
+        distribution: {
+          duration: durationDistribution
+        },
+        trends: {
+          daily_usage: {
+            today: usageStats?.filter(u => new Date(u.used_at) >= today).length || 0,
+            yesterday: usageStats?.filter(u => new Date(u.used_at) >= yesterday && new Date(u.used_at) < today).length || 0
+          }
+        }
+      },
+      timestamp: now.toISOString()
+    }
+
+    return NextResponse.json(response)
+
   } catch (error: any) {
-    console.error('💥 统计信息异常:', error)
-    return NextResponse.json({
-      success: false,
-      error: error.message || '统计失败'
-    }, { status: 500 })
+    console.error('💥 获取统计信息失败:', error)
+    return NextResponse.json(
+      { success: false, error: error.message || '获取统计失败' },
+      { status: 500 }
+    )
   }
 }
