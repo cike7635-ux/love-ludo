@@ -4,8 +4,8 @@
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { 
-  Key, Search, Filter, Download, Plus, RefreshCw, 
+import {
+  Key, Search, Filter, Download, Plus, RefreshCw,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight,
   Eye, EyeOff, Trash2, Check, Copy, AlertCircle,
   BarChart3, Settings, MoreVertical, Calendar,
@@ -53,14 +53,14 @@ const statusConfig: Record<KeyStatus, {
 function KeysPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  
+
   // 状态管理
   const [keys, setKeys] = useState<AccessKey[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [selectedKeys, setSelectedKeys] = useState<number[]>([])
   const [showFilters, setShowFilters] = useState(false)
-  
+
   // 分页状态
   const [pagination, setPagination] = useState({
     page: 1,
@@ -70,7 +70,7 @@ function KeysPageContent() {
     has_next: false,
     has_prev: false
   })
-  
+
   // 筛选状态
   const [filters, setFilters] = useState<FilterParams>({
     page: 1,
@@ -78,39 +78,67 @@ function KeysPageContent() {
     sort_by: 'created_at',
     sort_order: 'desc'
   })
-  
-  // 获取密钥数据
+
+
+
+
+  // 在 KeysPageContent 组件中，修改 fetchKeys 函数：
   const fetchKeys = useCallback(async () => {
     setLoading(true)
     setError(null)
-    
+
     try {
-      // 构建查询参数
-      const params = new URLSearchParams()
-      Object.entries(filters).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== '') {
-          params.append(key, value.toString())
-        }
-      })
-      
-      const response = await fetch(`/api/admin/keys/list?${params.toString()}`, {
+      console.log('📡 使用简单API获取密钥数据...')
+
+      // 使用简单API（新创建的）
+      const response = await fetch('/api/admin/keys/simple', {
         credentials: 'include',
         headers: { 'Cache-Control': 'no-cache' }
       })
-      
+
+      console.log('📦 API响应状态:', response.status)
+
       if (!response.ok) {
         throw new Error(`API请求失败 (${response.status})`)
       }
-      
+
       const result = await response.json()
-      
+
+      console.log('📊 API响应结果:', {
+        success: result.success,
+        keyCount: result.data?.keys?.length || 0
+      })
+
       if (!result.success) {
         throw new Error(result.error || '获取密钥数据失败')
       }
-      
-      setKeys(result.data.keys)
-      setPagination(result.data.pagination)
-      
+
+      // 处理数据格式，确保与之前的一致
+      const keysData = result.data.keys || []
+      console.log(`✅ 获取到 ${keysData.length} 条密钥数据`)
+
+      setKeys(keysData)
+
+      // 计算统计数据
+      const now = new Date()
+      const statsData = {
+        total: keysData.length,
+        active: keysData.filter(k => k.is_active && (!k.key_expires_at || new Date(k.key_expires_at) > now)).length,
+        used: keysData.filter(k => k.usage_count > 0 || k.used_at).length,
+        unused: keysData.filter(k => k.usage_count === 0 && !k.used_at && k.is_active).length,
+        expired: keysData.filter(k => k.key_expires_at && new Date(k.key_expires_at) < now).length,
+        inactive: keysData.filter(k => !k.is_active).length,
+        todayExpiring: 0, // 暂时不计算
+        nearExpiring: 0   // 暂时不计算
+      }
+
+      setStats(statsData)
+
+      // 设置分页信息（如果API返回了的话）
+      if (result.data.pagination) {
+        setPagination(result.data.pagination)
+      }
+
     } catch (error: any) {
       console.error('❌ 获取密钥数据失败:', error)
       setError(`获取数据失败: ${error.message}`)
@@ -118,27 +146,27 @@ function KeysPageContent() {
     } finally {
       setLoading(false)
     }
-  }, [filters])
-  
+  }, [])
+
   // 处理筛选变化
   const handleFilterChange = (newFilters: Partial<FilterParams>) => {
     setFilters(prev => ({ ...prev, ...newFilters, page: 1 }))
     setSelectedKeys([])
   }
-  
+
   // 处理分页
   const handlePageChange = (page: number) => {
     if (page >= 1 && page <= pagination.total_pages) {
       handleFilterChange({ page })
     }
   }
-  
+
   // 处理排序
   const handleSort = (field: string) => {
     const newOrder = filters.sort_by === field && filters.sort_order === 'desc' ? 'asc' : 'desc'
     handleFilterChange({ sort_by: field, sort_order: newOrder })
   }
-  
+
   // 导出CSV
   const handleExport = async (type: 'current_page' | 'filtered' | 'selected') => {
     try {
@@ -149,18 +177,18 @@ function KeysPageContent() {
         page: type === 'current_page' ? pagination.page : undefined,
         limit: type === 'current_page' ? pagination.limit : undefined
       }
-      
+
       const response = await fetch('/api/admin/keys/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(exportData),
         credentials: 'include'
       })
-      
+
       if (!response.ok) {
         throw new Error('导出失败')
       }
-      
+
       // 下载文件
       const blob = await response.blob()
       const url = window.URL.createObjectURL(blob)
@@ -171,24 +199,24 @@ function KeysPageContent() {
       a.click()
       document.body.removeChild(a)
       window.URL.revokeObjectURL(url)
-      
+
     } catch (error: any) {
       alert(`导出失败: ${error.message}`)
     }
   }
-  
+
   // 批量操作
   const handleBatchAction = async (action: 'disable' | 'enable' | 'delete') => {
     if (selectedKeys.length === 0) return
-    
+
     const confirmText = {
       disable: `确定要禁用选中的 ${selectedKeys.length} 个密钥吗？`,
       enable: `确定要启用选中的 ${selectedKeys.length} 个密钥吗？`,
       delete: `确定要删除选中的 ${selectedKeys.length} 个密钥吗？此操作不可撤销！`
     }[action]
-    
+
     if (!confirm(confirmText)) return
-    
+
     try {
       const response = await fetch('/api/admin/keys/batch', {
         method: 'POST',
@@ -196,9 +224,9 @@ function KeysPageContent() {
         body: JSON.stringify({ action, keyIds: selectedKeys }),
         credentials: 'include'
       })
-      
+
       const result = await response.json()
-      
+
       if (result.success) {
         alert(`成功${action === 'delete' ? '删除' : action === 'enable' ? '启用' : '禁用'}了 ${selectedKeys.length} 个密钥`)
         fetchKeys()
@@ -210,7 +238,7 @@ function KeysPageContent() {
       alert(`操作失败: ${error.message}`)
     }
   }
-  
+
   // 初始化加载
   useEffect(() => {
     const initialFilters: FilterParams = {
@@ -225,17 +253,17 @@ function KeysPageContent() {
       created_at_end: searchParams.get('created_at_end') || '',
       duration_min: searchParams.get('duration_min') ? parseInt(searchParams.get('duration_min')!) : undefined,
       duration_max: searchParams.get('duration_max') ? parseInt(searchParams.get('duration_max')!) : undefined,
-      is_active: searchParams.get('is_active') === 'true' ? true : 
-                searchParams.get('is_active') === 'false' ? false : undefined
+      is_active: searchParams.get('is_active') === 'true' ? true :
+        searchParams.get('is_active') === 'false' ? false : undefined
     }
-    
+
     setFilters(initialFilters)
   }, [searchParams])
-  
+
   useEffect(() => {
     fetchKeys()
   }, [fetchKeys])
-  
+
   // 获取时长显示
   const getDurationDisplay = (key: AccessKey): string => {
     if (key.original_duration_hours) {
@@ -252,7 +280,7 @@ function KeysPageContent() {
     }
     return `${key.account_valid_for_days}天`
   }
-  
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-950 p-4 md:p-6">
       {/* 页面标题 */}
@@ -272,7 +300,7 @@ function KeysPageContent() {
               )}
             </p>
           </div>
-          
+
           <div className="flex gap-2">
             <Link
               href="/admin/keys/generate"
@@ -284,7 +312,7 @@ function KeysPageContent() {
           </div>
         </div>
       </div>
-      
+
       {/* 筛选工具栏 */}
       <div className="mb-6 p-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl">
         <div className="flex flex-col md:flex-row gap-4">
@@ -301,7 +329,7 @@ function KeysPageContent() {
               />
             </div>
           </div>
-          
+
           {/* 筛选按钮 */}
           <button
             onClick={() => setShowFilters(!showFilters)}
@@ -315,7 +343,7 @@ function KeysPageContent() {
               <ChevronDown className="w-4 h-4 ml-2" />
             )}
           </button>
-          
+
           {/* 排序选择 */}
           <select
             className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
@@ -327,7 +355,7 @@ function KeysPageContent() {
             <option value="key_code">按密钥代码</option>
             <option value="account_valid_for_days">按有效期</option>
           </select>
-          
+
           {/* 排序方向 */}
           <button
             onClick={() => handleFilterChange({ sort_order: filters.sort_order === 'asc' ? 'desc' : 'asc' })}
@@ -335,7 +363,7 @@ function KeysPageContent() {
           >
             {filters.sort_order === 'asc' ? '升序 ↑' : '降序 ↓'}
           </button>
-          
+
           {/* 每页数量 */}
           <select
             className="px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
@@ -348,7 +376,7 @@ function KeysPageContent() {
             <option value="100">100条/页</option>
           </select>
         </div>
-        
+
         {/* 高级筛选面板 */}
         {showFilters && (
           <div className="mt-4 p-4 bg-gray-900/70 rounded-lg border border-gray-700">
@@ -370,7 +398,7 @@ function KeysPageContent() {
                   <option value="disabled">已禁用</option>
                 </select>
               </div>
-              
+
               {/* 创建时间范围 */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -391,7 +419,7 @@ function KeysPageContent() {
                   />
                 </div>
               </div>
-              
+
               {/* 有效期范围 */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">
@@ -403,8 +431,8 @@ function KeysPageContent() {
                     placeholder="最小"
                     className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
                     value={filters.duration_min || ''}
-                    onChange={(e) => handleFilterChange({ 
-                      duration_min: e.target.value ? parseInt(e.target.value) : undefined 
+                    onChange={(e) => handleFilterChange({
+                      duration_min: e.target.value ? parseInt(e.target.value) : undefined
                     })}
                   />
                   <input
@@ -412,13 +440,13 @@ function KeysPageContent() {
                     placeholder="最大"
                     className="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white"
                     value={filters.duration_max || ''}
-                    onChange={(e) => handleFilterChange({ 
-                      duration_max: e.target.value ? parseInt(e.target.value) : undefined 
+                    onChange={(e) => handleFilterChange({
+                      duration_max: e.target.value ? parseInt(e.target.value) : undefined
                     })}
                   />
                 </div>
               </div>
-              
+
               {/* 操作按钮 */}
               <div className="flex items-end">
                 <div className="flex gap-2 w-full">
@@ -448,7 +476,7 @@ function KeysPageContent() {
           </div>
         )}
       </div>
-      
+
       {/* 批量操作栏 */}
       {selectedKeys.length > 0 && (
         <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/30 rounded-xl">
@@ -459,7 +487,7 @@ function KeysPageContent() {
                 已选中 {selectedKeys.length} 个密钥
               </span>
             </div>
-            
+
             <div className="flex gap-2">
               <button
                 onClick={() => handleBatchAction('disable')}
@@ -495,7 +523,7 @@ function KeysPageContent() {
           </div>
         </div>
       )}
-      
+
       {/* 导出操作栏 */}
       <div className="mb-6 p-4 bg-gray-800/30 border border-gray-700/50 rounded-xl">
         <div className="flex flex-wrap gap-2">
@@ -530,7 +558,7 @@ function KeysPageContent() {
           </button>
         </div>
       </div>
-      
+
       {/* 错误提示 */}
       {error && (
         <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl animate-fade-in">
@@ -540,7 +568,7 @@ function KeysPageContent() {
           </div>
         </div>
       )}
-      
+
       {/* 密钥列表表格 */}
       <div className="bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
@@ -561,7 +589,7 @@ function KeysPageContent() {
                     className="rounded border-gray-600 bg-gray-800"
                   />
                 </th>
-                <th 
+                <th
                   className="text-left py-3 px-4 text-gray-400 font-medium text-sm cursor-pointer hover:text-white"
                   onClick={() => handleSort('key_code')}
                 >
@@ -573,7 +601,7 @@ function KeysPageContent() {
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">有效期</th>
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">状态</th>
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">当前用户</th>
-                <th 
+                <th
                   className="text-left py-3 px-4 text-gray-400 font-medium text-sm cursor-pointer hover:text-white"
                   onClick={() => handleSort('account_valid_for_days')}
                 >
@@ -581,7 +609,7 @@ function KeysPageContent() {
                     <span className="ml-1">{filters.sort_order === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </th>
-                <th 
+                <th
                   className="text-left py-3 px-4 text-gray-400 font-medium text-sm cursor-pointer hover:text-white"
                   onClick={() => handleSort('created_at')}
                 >
@@ -592,7 +620,7 @@ function KeysPageContent() {
                 <th className="text-left py-3 px-4 text-gray-400 font-medium text-sm">操作</th>
               </tr>
             </thead>
-            
+
             <tbody>
               {loading ? (
                 <tr>
@@ -627,13 +655,12 @@ function KeysPageContent() {
                   const statusConfigItem = statusConfig[key.status]
                   const StatusIcon = statusConfigItem.icon
                   const isSelected = selectedKeys.includes(key.id)
-                  
+
                   return (
-                    <tr 
-                      key={key.id} 
-                      className={`border-b border-gray-700/30 hover:bg-gray-800/30 transition-colors ${
-                        isSelected ? 'bg-blue-500/5' : ''
-                      }`}
+                    <tr
+                      key={key.id}
+                      className={`border-b border-gray-700/30 hover:bg-gray-800/30 transition-colors ${isSelected ? 'bg-blue-500/5' : ''
+                        }`}
                     >
                       <td className="py-3 px-4">
                         <input
@@ -649,7 +676,7 @@ function KeysPageContent() {
                           className="rounded border-gray-600 bg-gray-800"
                         />
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-2">
                           <code className="font-mono text-sm text-white bg-gray-900 px-3 py-2 rounded-lg border border-gray-700 truncate max-w-[200px]">
@@ -657,7 +684,7 @@ function KeysPageContent() {
                           </code>
                         </div>
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="max-w-[150px]">
                           <p className="text-gray-300 text-sm truncate" title={key.description || ''}>
@@ -665,7 +692,7 @@ function KeysPageContent() {
                           </p>
                         </div>
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="flex flex-col">
                           <span className="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs font-medium mb-1 w-fit">
@@ -678,7 +705,7 @@ function KeysPageContent() {
                           )}
                         </div>
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2.5 py-1.5 rounded-full text-xs ${statusConfigItem.bgColor} ${statusConfigItem.color}`}>
                           <StatusIcon className="w-3 h-3 mr-1.5" />
@@ -688,7 +715,7 @@ function KeysPageContent() {
                           )}
                         </span>
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         {key.current_user ? (
                           <div className="space-y-1 max-w-[150px]">
@@ -708,7 +735,7 @@ function KeysPageContent() {
                           <span className="text-gray-500 text-sm">-</span>
                         )}
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-2">
                           <Hash className="w-4 h-4 text-gray-400" />
@@ -718,10 +745,10 @@ function KeysPageContent() {
                             </span>
                             {key.max_uses && (
                               <div className="w-full bg-gray-700 rounded-full h-1.5 mt-1">
-                                <div 
+                                <div
                                   className="bg-green-500 h-1.5 rounded-full"
-                                  style={{ 
-                                    width: `${Math.min(100, ((key.usage_count || 0) / key.max_uses) * 100)}%` 
+                                  style={{
+                                    width: `${Math.min(100, ((key.usage_count || 0) / key.max_uses) * 100)}%`
                                   }}
                                 ></div>
                               </div>
@@ -729,7 +756,7 @@ function KeysPageContent() {
                           </div>
                         </div>
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="text-gray-300 text-sm">
                           {new Date(key.created_at).toLocaleString('zh-CN')}
@@ -740,7 +767,7 @@ function KeysPageContent() {
                           </div>
                         )}
                       </td>
-                      
+
                       <td className="py-3 px-4">
                         <div className="flex items-center space-x-2">
                           <button
@@ -750,7 +777,7 @@ function KeysPageContent() {
                           >
                             <Eye className="w-4 h-4 text-blue-400" />
                           </button>
-                          
+
                           <button
                             onClick={() => {
                               // 单个操作逻辑
@@ -768,7 +795,7 @@ function KeysPageContent() {
                               <Eye className="w-4 h-4 text-green-400" />
                             )}
                           </button>
-                          
+
                           <button
                             onClick={() => {
                               if (confirm('确定要删除此密钥吗？此操作不可撤销！')) {
@@ -789,7 +816,7 @@ function KeysPageContent() {
             </tbody>
           </table>
         </div>
-        
+
         {/* 分页控件 */}
         {keys.length > 0 && (
           <div className="px-4 py-3 border-t border-gray-700/50">
@@ -797,7 +824,7 @@ function KeysPageContent() {
               <div className="text-gray-400 text-sm">
                 显示 {((pagination.page - 1) * pagination.limit) + 1} - {Math.min(pagination.page * pagination.limit, pagination.total)} 条，共 {pagination.total} 条
               </div>
-              
+
               <div className="flex items-center space-x-2">
                 <button
                   onClick={() => handlePageChange(1)}
@@ -806,7 +833,7 @@ function KeysPageContent() {
                 >
                   首页
                 </button>
-                
+
                 <button
                   onClick={() => handlePageChange(pagination.page - 1)}
                   disabled={!pagination.has_prev}
@@ -815,7 +842,7 @@ function KeysPageContent() {
                   <ChevronLeft className="w-4 h-4 mr-1" />
                   上一页
                 </button>
-                
+
                 {/* 页码 */}
                 <div className="flex space-x-1">
                   {Array.from({ length: Math.min(5, pagination.total_pages) }, (_, i) => {
@@ -829,22 +856,21 @@ function KeysPageContent() {
                     } else {
                       pageNum = pagination.page - 2 + i
                     }
-                    
+
                     return (
                       <button
                         key={pageNum}
                         onClick={() => handlePageChange(pageNum)}
-                        className={`w-8 h-8 rounded-lg ${
-                          pagination.page === pageNum
+                        className={`w-8 h-8 rounded-lg ${pagination.page === pageNum
                             ? 'bg-amber-600 text-white'
                             : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-                        }`}
+                          }`}
                       >
                         {pageNum}
                       </button>
                     )
                   })}
-                  
+
                   {pagination.total_pages > 5 && pagination.page < pagination.total_pages - 2 && (
                     <>
                       <span className="px-2 text-gray-500">...</span>
@@ -857,7 +883,7 @@ function KeysPageContent() {
                     </>
                   )}
                 </div>
-                
+
                 <button
                   onClick={() => handlePageChange(pagination.page + 1)}
                   disabled={!pagination.has_next}
@@ -866,7 +892,7 @@ function KeysPageContent() {
                   下一页
                   <ChevronRight className="w-4 h-4 ml-1" />
                 </button>
-                
+
                 <button
                   onClick={() => handlePageChange(pagination.total_pages)}
                   disabled={pagination.page === pagination.total_pages}
@@ -875,7 +901,7 @@ function KeysPageContent() {
                   末页
                 </button>
               </div>
-              
+
               <div className="text-gray-400 text-sm">
                 每页 {pagination.limit} 条，共 {pagination.total_pages} 页
               </div>
@@ -883,7 +909,7 @@ function KeysPageContent() {
           </div>
         )}
       </div>
-      
+
       {/* 统计信息卡片 */}
       <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="p-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl">
@@ -893,7 +919,7 @@ function KeysPageContent() {
           </div>
           <p className="text-xl md:text-2xl font-bold text-white mt-2">{pagination.total}</p>
         </div>
-        
+
         <div className="p-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl">
           <div className="flex items-center">
             <Shield className="w-5 h-5 mr-2 text-green-400" />
@@ -903,7 +929,7 @@ function KeysPageContent() {
             {keys.filter(k => k.is_active && k.status !== 'expired').length}
           </p>
         </div>
-        
+
         <div className="p-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl">
           <div className="flex items-center">
             <Clock className="w-5 h-5 mr-2 text-amber-400" />
@@ -913,7 +939,7 @@ function KeysPageContent() {
             {keys.filter(k => k.status === 'unused').length}
           </p>
         </div>
-        
+
         <div className="p-4 bg-gray-800/50 backdrop-blur-sm border border-gray-700/50 rounded-xl">
           <div className="flex items-center">
             <Check className="w-5 h-5 mr-2 text-blue-400" />
@@ -924,7 +950,7 @@ function KeysPageContent() {
           </p>
         </div>
       </div>
-      
+
       {/* 操作提示 */}
       <div className="mt-6 p-4 bg-gray-800/30 border border-gray-700/50 rounded-lg">
         <div className="flex items-start">
@@ -948,7 +974,7 @@ function KeysPageContent() {
 // 外层组件 - 用Suspense包裹内层组件
 export default function KeysPage() {
   return (
-    <Suspense 
+    <Suspense
       fallback={
         <div className="min-h-screen bg-gradient-to-br from-gray-900 via-gray-900 to-gray-950 p-4 md:p-6">
           <div className="flex flex-col items-center justify-center h-96">

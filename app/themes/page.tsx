@@ -12,12 +12,12 @@ function getJwtCreationTime(jwt: string): Date | null {
   try {
     const payloadBase64 = jwt.split('.')[1];
     if (!payloadBase64) return null;
-    
+
     let payloadJson: string;
     const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
     const pad = base64.length % 4;
     const paddedBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
-    
+
     if (typeof Buffer !== 'undefined') {
       payloadJson = Buffer.from(paddedBase64, 'base64').toString();
     } else {
@@ -28,12 +28,12 @@ function getJwtCreationTime(jwt: string): Date | null {
           .join('')
       );
     }
-    
+
     const payload = JSON.parse(payloadJson);
     if (payload.iat) {
       return new Date(payload.iat * 1000);
     }
-    
+
     return null;
   } catch (error) {
     console.error('解析JWT失败:', error);
@@ -47,8 +47,8 @@ export default async function ThemesPage() {
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { 
-      cookies: { 
+    {
+      cookies: {
         getAll: () => cookieStore.getAll(),
         setAll: (cookiesToSet) => {
           try {
@@ -62,94 +62,103 @@ export default async function ThemesPage() {
       }
     }
   );
-  
+
   // 2. 检查用户登录状态
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     redirect('/login');
   }
-  
+
   // 3. 获取当前会话
   const { data: { session: currentSession } } = await supabase.auth.getSession();
   if (!currentSession) {
     await supabase.auth.signOut();
     redirect('/login?error=no_session');
   }
-  
+
   // 4. 获取用户资料（包括会话信息和有效期）
   const { data: profile } = await supabase
     .from('profiles')
     .select('account_expires_at, last_login_at, last_login_session')
     .eq('id', user.id)
     .single();
-  
+
   if (!profile) {
     redirect('/login?error=profile_not_found');
   }
-  
+
   // 5. 检查会员有效期
   const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
   if (isExpired) {
     redirect('/account-expired');
   }
-  
+
   // ============ 【严格的多设备登录验证】 ============
   // 从JWT中解析会话创建时间
   const sessionCreatedTime = getJwtCreationTime(currentSession.access_token);
   const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
-  
+
   // 添加3秒容差，避免由于时间同步或处理延迟导致的误判
   const tolerance = 3000; // 3秒
-  
+
   if (lastLoginTime && sessionCreatedTime) {
     // 计算时间差（毫秒）
     const timeDiff = lastLoginTime.getTime() - sessionCreatedTime.getTime();
-    
+
     // 如果最后登录时间比会话创建时间晚（超过容差），说明有新登录
     if (timeDiff > tolerance) {
       console.log(`[主题页面] 检测到新登录，强制退出用户: ${user.email}`);
       console.log(`  - JWT会话创建时间: ${sessionCreatedTime.toISOString()}`);
       console.log(`  - 最后登录时间: ${lastLoginTime.toISOString()}`);
       console.log(`  - 时间差: ${timeDiff}ms`);
-      
+
       // 强制退出当前会话
       await supabase.auth.signOut();
-      
+
       // 重定向到专门的过期提示页面
       const userEmail = user.email || '';
       const lastLoginTimeStr = lastLoginTime.toISOString();
-      
+
       redirect(`/login/expired?email=${encodeURIComponent(userEmail)}&last_login_time=${encodeURIComponent(lastLoginTimeStr)}`);
     }
   }
-  
+
   // 6. 可选的：记录当前登录到日志（用于调试）
   console.log(`[主题页面] 用户 ${user.email} 会话验证通过`);
   console.log(`  - JWT会话创建时间: ${sessionCreatedTime ? sessionCreatedTime.toISOString() : '无法解析'}`);
   console.log(`  - 最后登录时间: ${lastLoginTime ? lastLoginTime.toISOString() : '无记录'}`);
   console.log(`  - 会话标识: ${profile.last_login_session || '无标识'}`);
   // ============ 会话验证结束 ============
-  
+
   // 7. 🔥 关键修复：使用 listAvailableThemes() 而不是 listMyThemes()
   // 这个函数会自动为新用户创建5个默认主题
   const { data: themes } = await listAvailableThemes();
-
+  // 🔥 添加调试日志
+  console.log('[调试] listAvailableThemes 返回值:', {
+    themesLength: themes?.length,
+    error: error,
+    themes: themes?.map(t => ({
+      title: t.title,
+      task_count: t.task_count,
+      creator_id: t.creator_id
+    }))
+  });
   return (
     <>
       <div className="max-w-md mx-auto min-h-svh flex flex-col pb-24">
         {/* 顶部标题区域 - 简约风格 */}
         <div className="px-6 pt-8 pb-6">
           <h2 className="text-3xl font-bold text-white mb-6 text-center">主题库</h2>
-          
+
           {/* 会员状态提示 */}
           <div className="mb-4 p-3 glass rounded-xl">
             <p className="text-sm text-green-400 text-center">
-              会员有效期至：{profile?.account_expires_at ? 
-                new Date(profile.account_expires_at).toLocaleDateString('zh-CN') : 
+              会员有效期至：{profile?.account_expires_at ?
+                new Date(profile.account_expires_at).toLocaleDateString('zh-CN') :
                 '未设置'}
             </p>
           </div>
-          
+
           {/* 创建主题按钮 */}
           <Link
             href="/themes/new"
@@ -172,8 +181,8 @@ export default async function ThemesPage() {
             )}
 
             {themes.map((t) => (
-              <div 
-                key={t.id} 
+              <div
+                key={t.id}
                 className="relative bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-5 hover:bg-white/10 transition-all duration-200 group"
               >
                 {/* 操作按钮 - 移动端显示，桌面端悬停显示 */}
@@ -185,13 +194,13 @@ export default async function ThemesPage() {
                   >
                     <Edit className="w-3.5 h-3.5 text-white" />
                   </Link>
-                  
+
                   {/* 删除按钮 - 客户端组件 */}
                   <DeleteThemeButton themeId={t.id} themeTitle={t.title} />
                 </div>
-                
+
                 {/* 主题内容 - 可点击区域 */}
-                <Link 
+                <Link
                   href={`/themes/${t.id}`}
                   className="block no-underline"
                 >
@@ -200,32 +209,32 @@ export default async function ThemesPage() {
                     <h4 className="font-semibold text-base text-white mb-1 text-center w-full">
                       {t.title}
                     </h4>
-                    
+
                     {/* 统计信息 - 居中显示 */}
                     <div className="flex items-center justify-center space-x-4 mt-2">
                       <div className="flex items-center space-x-1">
                         <Hash className="w-3.5 h-3.5 text-gray-400" />
-                        <span className="text-sm text-gray-400">{t.task_count ?? 0} 任务</span>
+                        <span className="text-sm text-gray-400">{(t.task_count ?? 0)} 任务</span>
                       </div>
                       <div className="flex items-center space-x-1">
                         <Clock className="w-3.5 h-3.5 text-gray-400" />
                         <span className="text-sm text-gray-400">
-                          {new Date(t.created_at).toLocaleDateString('zh-CN', { 
-                            month: 'short', 
-                            day: 'numeric' 
+                          {new Date(t.created_at).toLocaleDateString('zh-CN', {
+                            month: 'short',
+                            day: 'numeric'
                           })}
                         </span>
                       </div>
                     </div>
                   </div>
-                  
+
                   {/* 主题描述 */}
                   {t.description && (
                     <p className="text-sm text-gray-400 line-clamp-2 mt-2 text-center">
                       {t.description}
                     </p>
                   )}
-                  
+
                   {/* 桌面端箭头提示 */}
                   <div className="hidden md:flex items-center justify-center mt-3">
                     <svg className="w-5 h-5 text-white/40" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -236,7 +245,7 @@ export default async function ThemesPage() {
               </div>
             ))}
           </div>
-          
+
           {/* 操作说明 */}
           {themes.length > 0 && (
             <div className="mt-8 p-4 bg-white/5 backdrop-blur-sm border border-white/10 rounded-xl">
