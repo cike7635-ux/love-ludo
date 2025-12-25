@@ -3,7 +3,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import Link from "next/link";
-import { listMyThemes } from "./actions";
+import { listAvailableThemes } from "@/app/lobby/actions"; // 修改这里：使用 lobby 的初始化函数
 import { Plus, Layers, Edit, Calendar, Hash, Clock, MoreVertical } from "lucide-react";
 import DeleteThemeButton from '@/app/components/themes/delete-theme-button';
 
@@ -69,12 +69,12 @@ export default async function ThemesPage() {
     redirect('/login');
   }
   
- // 3. 获取当前会话
-const { data: { session: currentSession } } = await supabase.auth.getSession();
-if (!currentSession) {
-  await supabase.auth.signOut();
-  redirect('/login?error=no_session');
-}
+  // 3. 获取当前会话
+  const { data: { session: currentSession } } = await supabase.auth.getSession();
+  if (!currentSession) {
+    await supabase.auth.signOut();
+    redirect('/login?error=no_session');
+  }
   
   // 4. 获取用户资料（包括会话信息和有效期）
   const { data: profile } = await supabase
@@ -130,8 +130,9 @@ if (!currentSession) {
   console.log(`  - 会话标识: ${profile.last_login_session || '无标识'}`);
   // ============ 会话验证结束 ============
   
-  // 7. 原有的业务逻辑 - 获取主题数据
-  const { data: themes } = await listMyThemes();
+  // 7. 🔥 关键修复：使用 listAvailableThemes() 而不是 listMyThemes()
+  // 这个函数会自动为新用户创建5个默认主题
+  const { data: themes } = await listAvailableThemes();
 
   return (
     <>
