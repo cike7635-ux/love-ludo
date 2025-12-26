@@ -1,5 +1,8 @@
-// /app/profile/page.tsx - 诊断增强完整版
-import { createClient } from "@/lib/supabase/server";
+// /app/profile/page.tsx
+// 修复版本：使用统一Supabase客户端模式，移除setAll
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { ensureProfile } from "@/lib/profile";
 import PreferencesSection from "@/components/profile/preferences-section";
 import CopyAccountButton from "@/components/profile/copy-account-button";
@@ -10,14 +13,28 @@ import Link from "next/link";
 
 export default async function ProfilePage() {
   console.log('[ProfilePage] 页面开始渲染');
-  const supabase = await createClient();
+  
+  // 使用统一的Supabase客户端创建方式
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { 
+      cookies: { 
+        getAll: () => cookieStore.getAll(),
+        // ❌ 移除setAll，让中间件处理cookie刷新
+      }
+    }
+  );
   
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   
-  if (userError) {
-    console.error('[ProfilePage] 获取用户失败:', userError);
+  if (userError || !user) {
+    console.log('[ProfilePage] 用户未登录，重定向');
+    redirect('/login');
   }
-  console.log('[ProfilePage] 当前认证用户:', user?.id, user?.email);
+  
+  console.log('[ProfilePage] 当前认证用户:', user.id, user.email);
 
   let nickname: string | null = null;
   let userId: string | null = null;
@@ -32,111 +49,107 @@ export default async function ProfilePage() {
   let statusText = '';
   let dataSource = '未查询'; // 用于追踪数据来源
 
-  if (user) {
-    try {
-      await ensureProfile();
-      console.log('[ProfilePage] ensureProfile 执行完成，开始查询 profiles 表，用户ID:', user.id);
+  try {
+    // 确保用户资料存在
+    await ensureProfile();
+    console.log('[ProfilePage] ensureProfile 执行完成，开始查询 profiles 表，用户ID:', user.id);
+    
+    // 1. 主查询：从 profiles 表获取数据
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("id, nickname, preferences, access_key_id, account_expires_at, created_at, updated_at")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileError) {
+      console.error('[ProfilePage] 查询 profiles 表失败:', profileError);
+    } else {
+      console.log('[ProfilePage] profiles 表查询结果:', {
+        找到数据: !!profile,
+        用户ID: profile?.id,
+        account_expires_at: profile?.account_expires_at,
+        access_key_id: profile?.access_key_id,
+        created_at: profile?.created_at,
+      });
+    }
+
+    nickname = profile?.nickname ?? null;
+    userId = user.id;
+    email = user.email ?? null;
+    accountExpiresAt = profile?.account_expires_at ?? null;
+    dataSource = accountExpiresAt ? 'profiles 表' : 'profiles 表(空)';
+
+    // 2. 诊断与补救：如果 profiles 表没有有效期，尝试从关联的 access_keys 表推导
+    if (!accountExpiresAt && profile?.access_key_id) {
+      console.log(`[ProfilePage] profiles 表中无有效期，尝试通过 access_key_id 查询密钥表:`, profile.access_key_id);
       
-      // 1. 主查询：从 profiles 表获取数据
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, nickname, preferences, access_key_id, account_expires_at, created_at, updated_at")
-        .eq("id", user.id)
+      const { data: keyData, error: keyError } = await supabase
+        .from("access_keys")
+        .select("account_valid_for_days, key_code, created_at")
+        .eq("id", profile.access_key_id)
         .maybeSingle();
 
-      if (profileError) {
-        console.error('[ProfilePage] 查询 profiles 表失败:', profileError);
+      if (keyError) {
+        console.error('[ProfilePage] 查询关联密钥失败:', keyError);
       } else {
-        console.log('[ProfilePage] profiles 表查询结果:', {
-          找到数据: !!profile,
-          用户ID: profile?.id,
-          account_expires_at: profile?.account_expires_at,
-          access_key_id: profile?.access_key_id,
-          created_at: profile?.created_at,
-          完整对象: JSON.stringify(profile, null, 2)
+        console.log('[ProfilePage] 关联密钥查询结果:', keyData);
+      }
+
+      // 如果找到密钥且有有效期天数，结合 profile 的创建时间进行计算
+      if (keyData?.account_valid_for_days && profile?.created_at) {
+        const createdDate = new Date(profile.created_at);
+        const expiryDate = new Date(createdDate);
+        expiryDate.setDate(expiryDate.getDate() + keyData.account_valid_for_days);
+        accountExpiresAt = expiryDate.toISOString();
+        dataSource = `根据密钥推算 (密钥: ${keyData.key_code}, 天数: ${keyData.account_valid_for_days})`;
+        console.log(`[ProfilePage] 根据密钥数据推算有效期:`, {
+          账户创建日: profile.created_at,
+          密钥有效天数: keyData.account_valid_for_days,
+          推算出的过期日: accountExpiresAt,
+          数据来源: dataSource
         });
       }
+    }
 
-      nickname = profile?.nickname ?? null;
-      userId = user.id;
-      email = user.email ?? null;
-      accountExpiresAt = profile?.account_expires_at ?? null;
-      dataSource = accountExpiresAt ? 'profiles 表' : 'profiles 表(空)';
+    // 3. 计算剩余天数和状态
+    console.log('[ProfilePage] 最终用于计算的有效期:', {
+      accountExpiresAt,
+      数据来源: dataSource
+    });
 
-      // 2. 诊断与补救：如果 profiles 表没有有效期，尝试从关联的 access_keys 表推导
-      if (!accountExpiresAt && profile?.access_key_id) {
-        console.log(`[ProfilePage] profiles 表中无有效期，尝试通过 access_key_id 查询密钥表:`, profile.access_key_id);
-        
-      const { data: keyData, error: keyError } = await supabase
-  .from("access_keys")
-  .select("account_valid_for_days, key_code, created_at") // 移除别名，直接使用字段名
-  .eq("id", profile.access_key_id)
-  .maybeSingle();
+    if (accountExpiresAt) {
+      const expiryDate = new Date(accountExpiresAt);
+      const now = new Date();
+      const diffMs = expiryDate.getTime() - now.getTime();
+      remainingDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-if (keyError) {
-  console.error('[ProfilePage] 查询关联密钥失败:', keyError);
-} else {
-  console.log('[ProfilePage] 关联密钥查询结果:', keyData);
-}
-
-// 如果找到密钥且有有效期天数，结合 profile 的创建时间进行计算
-if (keyData?.account_valid_for_days && profile?.created_at) {
-          const createdDate = new Date(profile.created_at);
-          const expiryDate = new Date(createdDate);
-          expiryDate.setDate(expiryDate.getDate() + keyData.account_valid_for_days);
-          accountExpiresAt = expiryDate.toISOString();
-          dataSource = `根据密钥推算 (密钥: ${keyData.key_code}, 天数: ${keyData.account_valid_for_days})`;
-          console.log(`[ProfilePage] 根据密钥数据推算有效期:`, {
-            账户创建日: profile.created_at,
-            密钥有效天数: keyData.account_valid_for_days,
-            推算出的过期日: accountExpiresAt,
-            数据来源: dataSource
-          });
-        }
-      }
-
-      // 3. 计算剩余天数和状态
-      console.log('[ProfilePage] 最终用于计算的有效期:', {
-        accountExpiresAt,
-        数据来源: dataSource
+      console.log('[ProfilePage] 有效期计算详情:', {
+        过期时间: expiryDate.toISOString(),
+        当前时间: now.toISOString(),
+        时间差毫秒: diffMs,
+        剩余天数: remainingDays
       });
 
-      if (accountExpiresAt) {
-        const expiryDate = new Date(accountExpiresAt);
-        const now = new Date();
-        const diffMs = expiryDate.getTime() - now.getTime();
-        remainingDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-        console.log('[ProfilePage] 有效期计算详情:', {
-          过期时间: expiryDate.toISOString(),
-          当前时间: now.toISOString(),
-          时间差毫秒: diffMs,
-          剩余天数: remainingDays
-        });
-
-        if (remainingDays > 0) {
-          accountStatus = 'active';
-          statusText = `${remainingDays} 天后到期`;
-        } else {
-          accountStatus = 'expired';
-          statusText = '已过期';
-        }
+      if (remainingDays > 0) {
+        accountStatus = 'active';
+        statusText = `${remainingDays} 天后到期`;
       } else {
-        accountStatus = 'no_record';
-        statusText = '未设置有效期';
-        console.log('[ProfilePage] 警告: 最终 accountExpiresAt 仍为 null/undefined，无法计算天数。');
+        accountStatus = 'expired';
+        statusText = '已过期';
       }
-
-      // 4. 处理其他偏好设置数据
-      const pref = (profile?.preferences ?? {}) as { gender?: "male" | "female" | "non_binary"; kinks?: string[] };
-      initialGender = pref?.gender ?? null;
-      initialKinks = Array.isArray(pref?.kinks) ? pref!.kinks! : [];
-
-    } catch (error) {
-      console.error('[ProfilePage] 数据处理过程中发生未知错误:', error);
+    } else {
+      accountStatus = 'no_record';
+      statusText = '未设置有效期';
+      console.log('[ProfilePage] 警告: 最终 accountExpiresAt 仍为 null/undefined，无法计算天数。');
     }
-  } else {
-    console.log('[ProfilePage] 用户未登录，仅渲染公共部分。');
+
+    // 4. 处理其他偏好设置数据
+    const pref = (profile?.preferences ?? {}) as { gender?: "male" | "female" | "non_binary"; kinks?: string[] };
+    initialGender = pref?.gender ?? null;
+    initialKinks = Array.isArray(pref?.kinks) ? pref!.kinks! : [];
+
+  } catch (error) {
+    console.error('[ProfilePage] 数据处理过程中发生未知错误:', error);
   }
 
   // 辅助函数：格式化日期显示
