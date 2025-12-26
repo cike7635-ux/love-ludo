@@ -1,4 +1,4 @@
-// /middleware.ts - 修复版本（30秒宽限期）
+// /middleware.ts - 修复版本（严格单设备登录 + 详细日志）
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -158,18 +158,27 @@ async function performStrictDeviceCheck(
     // 2. 生成当前会话标识
     const currentSessionId = `sess_${user.id}_${currentSession.access_token.substring(0, 12)}`;
     
+    // 🔥 添加详细日志
+    console.log(`[${requestId}] 🔍 多设备检测详情:`, {
+      用户: user.email,
+      当前会话标识: currentSessionId,
+      存储的会话标识: profile.last_login_session,
+      存储的最后活动时间: profile.last_login_at,
+      当前时间: now.toISOString()
+    });
+    
     // 3. 🔥 严格单设备检测逻辑
     
     // 情况A：用户没有会话记录（新用户或异常情况）
     if (!profile.last_login_session) {
-      console.log(`[${requestId}] 用户无会话记录，设置初始会话`);
+      console.log(`[${requestId}] 用户无会话记录，设置初始会话: ${currentSessionId}`);
       
       // 同步设置会话记录
       await supabase
         .from('profiles')
         .update({
           last_login_session: currentSessionId,
-          last_login_at: now.toISOString(), // 🔥 设置当前时间
+          last_login_at: now.toISOString(),
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -179,13 +188,13 @@ async function performStrictDeviceCheck(
     
     // 情况B：检测到初始会话标识（来自注册API）
     if (profile.last_login_session.startsWith('init_')) {
-      console.log(`[${requestId}] 检测到初始会话，更新为真实会话`);
+      console.log(`[${requestId}] 检测到初始会话 ${profile.last_login_session}，更新为真实会话 ${currentSessionId}`);
       
       await supabase
         .from('profiles')
         .update({
           last_login_session: currentSessionId,
-          last_login_at: now.toISOString(), // 🔥 设置当前时间
+          last_login_at: now.toISOString(),
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -195,7 +204,7 @@ async function performStrictDeviceCheck(
     
     // 情况C：会话完全匹配 - 正常访问
     if (profile.last_login_session === currentSessionId) {
-      console.log(`[${requestId}] 会话匹配，更新最后活动时间`);
+      console.log(`[${requestId}] ✅ 会话匹配: ${currentSessionId}，更新最后活动时间`);
       
       // 🔥 关键修复：每次请求都更新最后活动时间
       const { error: updateError } = await supabase
@@ -217,9 +226,16 @@ async function performStrictDeviceCheck(
     const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
     const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
     
-    // 🔥 修改：如果用户最后活动时间在30秒内，允许更新会话
-    if (timeSinceLastLogin < 30000) { // 🔥 30秒 = 30000ms（原来120000ms）
-      console.log(`[${requestId}] 用户在30秒内有活动，更新会话标识`);
+    console.log(`[${requestId}] ❌ 会话不匹配！`, {
+      存储的会话: profile.last_login_session,
+      当前会话: currentSessionId,
+      时间差: `${timeSinceLastLogin}ms (${Math.round(timeSinceLastLogin/1000)}秒)`,
+      是否在30秒内: timeSinceLastLogin < 30000
+    });
+    
+    // 🔥 如果用户最后活动时间在30秒内，允许更新会话
+    if (timeSinceLastLogin < 30000) { // 30秒 = 30000ms
+      console.log(`[${requestId}] ⚡ 用户在30秒内有活动，更新会话标识为: ${currentSessionId}`);
       
       await supabase
         .from('profiles')
@@ -234,11 +250,17 @@ async function performStrictDeviceCheck(
     }
     
     // 情况E：多设备登录 - 强制退出
-    console.log(`[${requestId}] 🔴 检测到多设备登录，强制退出: ${user.email}`);
+    console.log(`[${requestId}] 🔴 检测到多设备登录，强制退出: ${user.email}`, {
+      原设备最后活动: lastLoginTime?.toISOString(),
+      当前设备: currentSessionId,
+      时间差超过: `${Math.round(timeSinceLastLogin/1000)}秒`
+    });
+    
     const redirectUrl = new URL('/login/expired', request.url);
     redirectUrl.searchParams.set('email', user.email || '');
     redirectUrl.searchParams.set('reason', 'multi_device');
     redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
+    redirectUrl.searchParams.set('current_session', currentSessionId.substring(0, 20));
     
     if (lastLoginTime) {
       redirectUrl.searchParams.set('last_login_time', lastLoginTime.toISOString());
