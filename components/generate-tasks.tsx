@@ -257,9 +257,9 @@ export default function GenerateTasksSection({
   const isOverMonthlyLimit = usageStats.monthlyRemaining <= 0;
   const canGenerate = !isOverDailyLimit && !isOverMonthlyLimit;
 
-  // 简化渲染逻辑
+  // 🔥 修复：使用毛玻璃效果
   const renderUsageStats = () => (
-    <div className="mb-4 bg-gradient-to-br from-gray-800/50 to-gray-900/50 rounded-xl p-3 border border-white/10">
+    <div className="mb-4 glass backdrop-blur-lg bg-white/5 rounded-xl p-3 border border-white/10">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-gray-400">AI使用统计</span>
         <button
@@ -355,7 +355,7 @@ export default function GenerateTasksSection({
                 value={customRequirement}
                 onChange={(e) => setCustomRequirement(e.target.value)}
                 rows={4}
-                className="w-full rounded-xl bg-white/10 border border-white/20 px-3 py-2 text-sm outline-none focus:border-brand-pink transition-all"
+                className="w-full glass rounded-xl bg-white/5 border border-white/20 px-3 py-2 text-sm outline-none focus:border-brand-pink transition-all"
                 placeholder="例如：增加户外活动、避免需要高消费的任务、希望有更多情感交流类的内容..."
               />
             </div>
@@ -416,7 +416,7 @@ export default function GenerateTasksSection({
             {suggestions.map((s, idx) => (
               <label
                 key={idx}
-                className={`flex items-start space-x-3 rounded-xl p-3 border transition-all cursor-pointer ${
+                className={`flex items-start space-x-3 glass rounded-xl p-3 border transition-all cursor-pointer ${
                   selected[idx]
                     ? "bg-brand-pink/10 border-brand-pink/30"
                     : "bg-white/5 border-white/10 hover:bg-white/10"
@@ -479,7 +479,8 @@ export default function GenerateTasksSection({
           )}
         </Button>
       ) : (
-        <div className="glass rounded-2xl p-5">
+        // 🔥 修复：恢复毛玻璃背景
+        <div className="glass backdrop-blur-xl rounded-2xl p-5 border border-white/10">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center space-x-2">
               <Sparkles className="w-5 h-5 text-brand-pink" />
@@ -511,7 +512,7 @@ export default function GenerateTasksSection({
 
       {showModal && mounted && createPortal(
         <div className="fixed inset-0 z-[1000] bg-black/60 backdrop-blur-sm flex items-center justify-center p-6">
-          <div className="glass rounded-3xl p-6 max-w-md w-full glow-pink max-h-[90vh] overflow-y-auto">
+          <div className="glass backdrop-blur-xl rounded-3xl p-6 max-w-md w-full glow-pink max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-xl font-bold">AI 生成任务</h3>
               <button
