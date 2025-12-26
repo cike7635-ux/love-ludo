@@ -1,4 +1,4 @@
-// /middleware.ts - 完整功能恢复版本（单设备登录 + 会员检查）
+// /middleware.ts - 修复版本（30秒宽限期）
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -169,7 +169,7 @@ async function performStrictDeviceCheck(
         .from('profiles')
         .update({
           last_login_session: currentSessionId,
-          last_login_at: now.toISOString(),
+          last_login_at: now.toISOString(), // 🔥 设置当前时间
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -185,7 +185,7 @@ async function performStrictDeviceCheck(
         .from('profiles')
         .update({
           last_login_session: currentSessionId,
-          last_login_at: now.toISOString(),
+          last_login_at: now.toISOString(), // 🔥 设置当前时间
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -195,28 +195,37 @@ async function performStrictDeviceCheck(
     
     // 情况C：会话完全匹配 - 正常访问
     if (profile.last_login_session === currentSessionId) {
-      console.log(`[${requestId}] 会话匹配，正常访问`);
+      console.log(`[${requestId}] 会话匹配，更新最后活动时间`);
+      
+      // 🔥 关键修复：每次请求都更新最后活动时间
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          last_login_at: now.toISOString(), // 实时更新时间！
+          updated_at: now.toISOString()
+        })
+        .eq('id', user.id);
+      
+      if (updateError) {
+        console.error(`[${requestId}] 更新活动时间失败:`, updateError);
+      }
+      
       return { shouldContinue: true };
     }
     
-    // 情况D：会话不匹配 - 检查是否在新用户宽限期内
-    
+    // 情况D：会话不匹配 - 检查最后活动时间
     const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
     const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
     
-    // 检查是否是24小时内注册的新用户
-    const userCreatedAt = profile.created_at ? new Date(profile.created_at) : new Date();
-    const isNewUser = now.getTime() - userCreatedAt.getTime() < 24 * 60 * 60 * 1000;
-    
-    // 🔥 新用户2分钟宽限期（如果确实需要）
-    if (isNewUser && timeSinceLastLogin < 120000) { // 2分钟 = 120000ms
-      console.log(`[${requestId}] 新用户处于2分钟宽限期内，更新会话`);
+    // 🔥 修改：如果用户最后活动时间在30秒内，允许更新会话
+    if (timeSinceLastLogin < 30000) { // 🔥 30秒 = 30000ms（原来120000ms）
+      console.log(`[${requestId}] 用户在30秒内有活动，更新会话标识`);
       
       await supabase
         .from('profiles')
         .update({
           last_login_session: currentSessionId,
-          last_login_at: now.toISOString(),
+          last_login_at: now.toISOString(), // 同时更新时间！
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -225,8 +234,7 @@ async function performStrictDeviceCheck(
     }
     
     // 情况E：多设备登录 - 强制退出
-    console.log(`[${requestId}] 🔴 检测到多设备登录，强制退出`);
-    
+    console.log(`[${requestId}] 🔴 检测到多设备登录，强制退出: ${user.email}`);
     const redirectUrl = new URL('/login/expired', request.url);
     redirectUrl.searchParams.set('email', user.email || '');
     redirectUrl.searchParams.set('reason', 'multi_device');
@@ -446,6 +454,24 @@ export async function middleware(request: NextRequest) {
         
         // ============ 所有检查通过 ============
         console.log(`[${requestId}] 所有安全检查通过，放行用户`);
+        
+        // 🔥 双保险：确保更新用户最后活动时间
+        try {
+          const updateResult = await supabase
+            .from('profiles')
+            .update({
+              last_login_at: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', user.id);
+          
+          if (updateResult.error) {
+            console.error(`[${requestId}] 最后活动时间更新失败:`, updateResult.error);
+          }
+        } catch (error) {
+          console.error(`[${requestId}] 更新活动时间异常:`, error);
+        }
+        
         return createResponseWithUserHeaders(request, user);
         
       } catch (gamePathError) {
