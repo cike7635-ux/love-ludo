@@ -1,5 +1,4 @@
-// /app/api/auth/signup-with-key/route.ts
-// 注册API - 修复版本（设置初始会话标识，修复setAll）
+// /app/api/auth/signup-with-key/route.ts - 注册API（优化版）
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
@@ -9,7 +8,7 @@ export async function POST(request: NextRequest) {
   try {
     const cookieStore = await cookies();
     
-    // 🔥 修复：setAll应该正常工作（API路由允许设置cookie）
+    // ✅ API路由可以设置cookie
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -19,7 +18,7 @@ export async function POST(request: NextRequest) {
           setAll: (cookiesToSet) => {
             try {
               cookiesToSet.forEach(({ name, value, options }) => {
-                // ✅ API路由可以设置cookie
+                // ✅ API路由允许设置cookie
                 cookieStore.set(name, value, options);
               });
             } catch (error) {
@@ -63,6 +62,9 @@ export async function POST(request: NextRequest) {
     const { data: authData, error: authError } = await supabase.auth.signUp({
       email: email.trim(),
       password: password.trim(),
+      options: {
+        emailRedirectTo: `${process.env.NEXT_PUBLIC_SITE_URL}/login`,
+      },
     });
     
     if (authError || !authData.user) {
@@ -76,62 +78,71 @@ export async function POST(request: NextRequest) {
     expiryDate.setDate(expiryDate.getDate() + validDays);
     const accountExpiresAt = expiryDate.toISOString();
 
-    // 5. 🔥 关键修复：设置初始会话标识
+    // 5. ✅ 关键修复：设置初始会话标识
     const now = new Date();
     const initialSessionId = `init_${authData.user.id}_${Date.now()}`;
     
-    // 更新用户资料（profiles 表）
-    const { error: profileError } = await supabase.from('profiles').upsert({
-      id: authData.user.id,
-      email: email.trim(),
-      access_key_id: keyData.id,
-      account_expires_at: accountExpiresAt,
-      // 🔥 设置关键字段
-      last_login_at: now.toISOString(),
-      last_login_session: initialSessionId,  // 初始会话标识
-      created_at: now.toISOString(),
-      updated_at: now.toISOString(),
-    });
-    
-    if (profileError) {
-      console.error('[API] 更新profiles失败:', profileError);
-      // 即使profiles更新失败，也继续执行
-    }
-
-    // 6. 更新密钥使用次数
-    const { error: updateKeyError } = await supabase
-      .from('access_keys')
-      .update({ 
-        used_count: (keyData.used_count || 0) + 1, 
-        updated_at: now.toISOString() 
-      })
-      .eq('id', keyData.id);
-    
-    if (updateKeyError) {
-      console.error('[API] 更新密钥使用次数失败:', updateKeyError);
-    }
+    // 异步初始化用户资料（不阻塞响应）
+    setTimeout(async () => {
+      try {
+        // 更新用户资料（profiles 表）
+        const { error: profileError } = await supabase.from('profiles').upsert({
+          id: authData.user.id,
+          email: email.trim(),
+          access_key_id: keyData.id,
+          account_expires_at: accountExpiresAt,
+          last_login_at: now.toISOString(),
+          last_login_session: initialSessionId,  // 初始会话标识
+          created_at: now.toISOString(),
+          updated_at: now.toISOString(),
+        });
+        
+        if (profileError) {
+          console.error('[API] 异步更新profiles失败:', profileError);
+        }
+        
+        // 更新密钥使用次数
+        const { error: updateKeyError } = await supabase
+          .from('access_keys')
+          .update({ 
+            used_count: (keyData.used_count || 0) + 1, 
+            updated_at: now.toISOString() 
+          })
+          .eq('id', keyData.id);
+        
+        if (updateKeyError) {
+          console.error('[API] 异步更新密钥失败:', updateKeyError);
+        }
+        
+        console.log('[API] 异步初始化完成:', { 
+          userId: authData.user.id, 
+          sessionId: initialSessionId 
+        });
+      } catch (asyncError) {
+        console.error('[API] 异步初始化异常:', asyncError);
+      }
+    }, 0);
 
     console.log('[API] 注册成功:', { 
       userId: authData.user.id, 
       email: email.trim(),
-      expiresAt: accountExpiresAt,
-      sessionId: initialSessionId
     });
 
-    // 7. 返回成功响应（不自动登录）
+    // 6. 快速响应，不等待异步操作
     return NextResponse.json({
       success: true,
-      message: '注册成功！请使用刚才的邮箱和密码登录',
+      message: '注册成功！请检查邮箱确认注册，然后登录',
       user: { 
         id: authData.user.id, 
         email: authData.user.email 
       },
       expires_at: accountExpiresAt,
-      redirect_to: `/login?email=${encodeURIComponent(email.trim())}&from=signup&key_used=${formattedKeyCode}`
+      // 不自动重定向，让用户自己登录
+      note: '请前往登录页面使用注册的邮箱和密码登录'
     });
 
   } catch (error: any) {
-    console.error('[API] 未处理异常:', error);
+    console.error('[API] 注册异常:', error);
     return NextResponse.json({ 
       error: '服务器内部错误，请稍后重试或联系客服' 
     }, { status: 500 });

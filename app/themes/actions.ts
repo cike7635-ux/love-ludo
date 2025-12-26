@@ -1,4 +1,4 @@
-// /app/themes/actions.ts - 完整版（包含所有缺失的函数）
+// /app/themes/actions.ts - 完整版（修正AI生成任务保存问题）
 'use server';
 
 import { createClient } from '@/lib/supabase/server';
@@ -6,7 +6,101 @@ import { ensureProfile } from '@/lib/profile';
 import fs from 'fs/promises';
 import path from 'path';
 
-// 🔥 补充缺失的函数
+// 🔥 批量插入任务（用于AI生成）- 修正版
+export async function bulkInsertTasks(formData: FormData) {
+  try {
+    const supabase = await createClient();
+    
+    const theme_id = formData.get('theme_id') as string;
+    const tasksJson = formData.get('tasks') as string;
+    
+    if (!theme_id || !tasksJson) {
+      return { data: null, error: '缺少必要参数' };
+    }
+    
+    let tasks;
+    try {
+      tasks = JSON.parse(tasksJson);
+    } catch (parseError) {
+      console.error('[bulkInsertTasks] 解析任务JSON失败:', parseError);
+      return { data: null, error: '任务数据格式错误' };
+    }
+    
+    if (!Array.isArray(tasks) || tasks.length === 0) {
+      return { data: null, error: '任务数据必须是非空数组' };
+    }
+    
+    console.log(`[bulkInsertTasks] 为主题 ${theme_id} 批量插入 ${tasks.length} 个任务`);
+    
+    // ✅ 修正：移除不存在的 ai_metadata 字段
+    const tasksToInsert = tasks.map((task, index) => ({
+      theme_id,
+      description: task.description || task.content || task.task || '未命名任务',
+      type: task.type || 'interaction',
+      order_index: task.order_index || index,
+      is_ai_generated: true
+      // ❌ 已删除：ai_metadata: task.metadata || {},
+    }));
+    
+    // 批量插入
+    const { data, error } = await supabase
+      .from('tasks')
+      .insert(tasksToInsert)
+      .select();
+    
+    if (error) {
+      console.error('[bulkInsertTasks] 批量插入任务失败:', error);
+      console.error('详细错误:', error.message);
+      return { data: null, error: `数据库错误: ${error.message}` };
+    }
+    
+    // 更新主题的任务计数
+    try {
+      // 先检查函数是否存在
+      const { error: rpcError } = await supabase.rpc('increment_theme_task_count_by', { 
+        theme_id, 
+        increment: tasks.length 
+      });
+      
+      if (rpcError) {
+        console.warn('[bulkInsertTasks] 调用increment_theme_task_count_by失败:', rpcError);
+        // 降级方案：直接更新主题表
+        await updateThemeTaskCount(supabase, theme_id);
+      }
+    } catch (rpcException) {
+      console.warn('[bulkInsertTasks] RPC调用异常，使用降级方案:', rpcException);
+      await updateThemeTaskCount(supabase, theme_id);
+    }
+    
+    console.log(`[bulkInsertTasks] 成功插入 ${data?.length || 0} 个任务`);
+    return { data, error: null };
+    
+  } catch (error: any) {
+    console.error('[bulkInsertTasks] 未知错误:', error);
+    return { data: null, error: error.message || '保存任务失败' };
+  }
+}
+
+// 辅助函数：更新主题任务计数
+async function updateThemeTaskCount(supabase: any, theme_id: string) {
+  try {
+    // 查询当前任务数
+    const { count } = await supabase
+      .from('tasks')
+      .select('*', { count: 'exact', head: true })
+      .eq('theme_id', theme_id);
+    
+    // 更新主题表的任务计数
+    await supabase
+      .from('themes')
+      .update({ task_count: count })
+      .eq('id', theme_id);
+    
+    console.log(`[updateThemeTaskCount] 主题 ${theme_id} 任务计数更新为: ${count}`);
+  } catch (error) {
+    console.error('[updateThemeTaskCount] 更新任务计数失败:', error);
+  }
+}
 
 /**
  * 删除主题及其关联的任务
@@ -47,70 +141,6 @@ export async function deleteTheme(formData: FormData) {
   } catch (error) {
     console.error('[deleteTheme] 异常:', error);
     return { data: null, error: '删除主题时发生错误' };
-  }
-}
-
-/**
- * 批量插入任务（用于AI生成）
- */
-export async function bulkInsertTasks(formData: FormData) {
-  try {
-    const supabase = await createClient();
-    
-    const theme_id = formData.get('theme_id') as string;
-    const tasksJson = formData.get('tasks') as string;
-    
-    if (!tasksJson) {
-      return { data: null, error: '没有提供任务数据' };
-    }
-    
-    let tasks;
-    try {
-      tasks = JSON.parse(tasksJson);
-    } catch (parseError) {
-      console.error('[bulkInsertTasks] 解析任务JSON失败:', parseError);
-      return { data: null, error: '任务数据格式错误' };
-    }
-    
-    if (!Array.isArray(tasks) || tasks.length === 0) {
-      return { data: null, error: '任务数据必须是非空数组' };
-    }
-    
-    console.log(`[bulkInsertTasks] 为主题 ${theme_id} 批量插入 ${tasks.length} 个任务`);
-    
-    // 准备批量插入数据
-    const tasksToInsert = tasks.map((task, index) => ({
-      theme_id,
-      description: task.description || task.content || task.task || '未命名任务',
-      type: task.type || 'interaction',
-      order_index: task.order_index || index,
-      is_ai_generated: true,
-      ai_metadata: task.metadata || {},
-    }));
-    
-    // 批量插入
-    const { data, error } = await supabase
-      .from('tasks')
-      .insert(tasksToInsert)
-      .select();
-    
-    if (error) {
-      console.error('[bulkInsertTasks] 批量插入任务失败:', error);
-      return { data: null, error: error.message };
-    }
-    
-    // 更新主题的任务计数
-    await supabase.rpc('increment_theme_task_count_by', { 
-      theme_id, 
-      increment: tasks.length 
-    });
-    
-    console.log(`[bulkInsertTasks] 成功插入 ${data.length} 个任务`);
-    return { data, error: null };
-    
-  } catch (error) {
-    console.error('[bulkInsertTasks] 异常:', error);
-    return { data: null, error: '批量插入任务时发生错误' };
   }
 }
 
@@ -161,8 +191,6 @@ export async function createTheme(formData: FormData) {
     return { data: null, error: '创建主题时发生错误' };
   }
 }
-
-// 之前的函数保持不变...
 
 // 获取用户所有主题
 export async function listMyThemes() {
