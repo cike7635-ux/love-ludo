@@ -1,4 +1,5 @@
 // /app/lobby/page.tsx
+// 修复版本：移除setAll和多设备检测逻辑
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
@@ -10,50 +11,8 @@ import { Users, LogIn, Layers, ChevronDown, Hash, Github } from "lucide-react";
 import PreferencesModal from "@/components/profile/preferences-modal";
 import Link from "next/link";
 
-// 辅助函数：从JWT中解析创建时间（安全版本）
-function getJwtCreationTime(jwt: string): Date | null {
-  try {
-    // JWT格式: header.payload.signature
-    const payloadBase64 = jwt.split('.')[1];
-    if (!payloadBase64) return null;
-    
-    // Base64解码（兼容Node.js和浏览器环境）
-    let payloadJson: string;
-    
-    // 处理可能的Base64 URL编码
-    const base64 = payloadBase64.replace(/-/g, '+').replace(/_/g, '/');
-    const pad = base64.length % 4;
-    const paddedBase64 = pad ? base64 + '='.repeat(4 - pad) : base64;
-    
-    // 在Node.js环境中使用Buffer，在浏览器中使用atob
-    if (typeof Buffer !== 'undefined') {
-      payloadJson = Buffer.from(paddedBase64, 'base64').toString();
-    } else {
-      // 浏览器环境
-      payloadJson = decodeURIComponent(
-        atob(paddedBase64)
-          .split('')
-          .map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
-          .join('')
-      );
-    }
-    
-    const payload = JSON.parse(payloadJson);
-    
-    // iat是签发时间（秒），需要转换为毫秒
-    if (payload.iat) {
-      return new Date(payload.iat * 1000);
-    }
-    
-    return null;
-  } catch (error) {
-    console.error('解析JWT失败:', error);
-    return null;
-  }
-}
-
 export default async function LobbyPage({ searchParams }: { searchParams?: { error?: string } }) {
-  // 1. 创建Supabase客户端
+  // 1. 创建简化的Supabase客户端（移除setAll）
   const cookieStore = await cookies();
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -61,94 +20,60 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
     { 
       cookies: { 
         getAll: () => cookieStore.getAll(),
-        setAll: (cookiesToSet) => {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch (error) {
-            console.error('设置cookie失败:', error);
-          }
-        }
+        // ❌ 移除setAll，让中间件处理cookie刷新
       }
     }
   );
   
-  // 2. 检查用户登录状态
+  // 2. 检查用户登录状态（使用getUser替代getSession）
   const { data: { user }, error: authError } = await supabase.auth.getUser();
   if (authError || !user) {
     redirect('/login');
   }
   
-  // 3. 获取当前会话
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {  // ✅ 修复：改为 session
-    await supabase.auth.signOut();
-    redirect('/login?error=no_session');
-  }
-  
-  // 4. 获取用户资料（包括会话信息和有效期）
+  // 3. 获取用户资料（检查会员有效期）
   const { data: profile } = await supabase
     .from('profiles')
-    .select('account_expires_at, last_login_at, last_login_session')
+    .select('account_expires_at')
     .eq('id', user.id)
     .single();
   
+  // 如果是新用户且没有profile，创建基本profile
   if (!profile) {
-    redirect('/login?error=profile_not_found');
+    console.log(`[Lobby] 新用户 ${user.email} 资料不存在，创建基本资料`);
+    const { error: insertError } = await supabase
+      .from('profiles')
+      .insert([{ 
+        id: user.id, 
+        email: user.email,
+        created_at: new Date().toISOString()
+      }]);
+    
+    if (insertError) {
+      console.error('[Lobby] 创建用户资料失败:', insertError);
+    }
+    
+    // 重定向到主题初始化或继续
+    console.log(`[Lobby] 新用户 ${user.email} 基本资料已创建`);
   }
   
-  // 5. 检查会员有效期
-  const isExpired = !profile?.account_expires_at || new Date(profile.account_expires_at) < new Date();
+  // 4. 检查会员有效期
+  const isExpired = profile?.account_expires_at && new Date(profile.account_expires_at) < new Date();
   if (isExpired) {
     redirect('/account-expired');
   }
   
-  // ============ 【严格的多设备登录验证】 ============
-  // 从JWT中解析会话创建时间
-  const sessionCreatedTime = getJwtCreationTime(session.access_token);  // ✅ 修复：改为 session.access_token
-  const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
-  
-  // 添加3秒容差，避免由于时间同步或处理延迟导致的误判
-  const tolerance = 3000; // 3秒
-  
-  if (lastLoginTime && sessionCreatedTime) {
-    // 计算时间差（毫秒）
-    const timeDiff = lastLoginTime.getTime() - sessionCreatedTime.getTime();
-    
-    // 如果最后登录时间比会话创建时间晚（超过容差），说明有新登录
-    if (timeDiff > tolerance) {
-      console.log(`[严格模式] 检测到新登录，强制退出用户: ${user.email}`);
-      console.log(`  - JWT会话创建时间: ${sessionCreatedTime.toISOString()}`);
-      console.log(`  - 最后登录时间: ${lastLoginTime.toISOString()}`);
-      console.log(`  - 时间差: ${timeDiff}ms`);
-      
-      // 强制退出当前会话
-      await supabase.auth.signOut();
-      
-      // ============ 【修改这里】重定向到专门的过期提示页面 ============
-      // 确保所有参数都是字符串
-      const userEmail = user.email || '';
-      const lastLoginTimeStr = lastLoginTime.toISOString();
-      
-      redirect(`/login/expired?email=${encodeURIComponent(userEmail)}&last_login_time=${encodeURIComponent(lastLoginTimeStr)}`);
-    }
-  }
-  
-  // 6. 可选的：记录当前登录到日志（用于调试）
-  console.log(`[登录验证] 用户 ${user.email} 会话验证通过`);
-  console.log(`  - JWT会话创建时间: ${sessionCreatedTime ? sessionCreatedTime.toISOString() : '无法解析'}`);
-  console.log(`  - 最后登录时间: ${lastLoginTime ? lastLoginTime.toISOString() : '无记录'}`);
-  console.log(`  - 会话标识: ${profile.last_login_session || '无标识'}`);
-  // ============ 会话验证结束 ============
-  
-  // 7. 原有的业务逻辑
+  // 5. 获取主题列表
   const { data: themes } = await listAvailableThemes();
   const errorMessage = searchParams?.error ?? "";
   
+  // 6. 如果是新用户且没有主题，log提示
+  if ((themes?.length || 0) === 0) {
+    console.log(`[Lobby] 用户 ${user.email} 没有主题，将访问/themes时初始化`);
+  }
+  
   return (
     <>
-      {/* 首次进入首页时的偏好设置弹窗（仅登录用户，且偏好未完善时提示） */}
       <PreferencesModal />
       <div className="max-w-md mx-auto min-h-svh flex flex-col p-6 pb-24">
         {/* 顶部提示小字 */}
@@ -156,12 +81,12 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
           将网站添加到主屏幕可以获得近似app的体验哦~
         </p>
         
-        {/* 会员状态提示（可选） */}
+        {/* 会员状态提示 */}
         <div className="mb-4 p-3 glass rounded-xl">
           <p className="text-sm text-green-400 text-center">
             会员有效期至：{profile?.account_expires_at ? 
               new Date(profile.account_expires_at).toLocaleDateString('zh-CN') : 
-              '未设置'}
+              '新用户（请在主题库中初始化主题）'}
           </p>
         </div>
         
@@ -208,11 +133,11 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
                     required
                   >
                     <option value="" className="bg-gray-800">请选择游戏主题</option>
-                    {themes.map((t) => (
+                    {themes?.map((t) => (
                       <option key={t.id} value={t.id} className="bg-gray-800">
                         {t.title}
                       </option>
-                    ))}
+                    )) || []}
                   </select>
                   <ChevronDown className="w-4 h-4 text-gray-400" />
                 </div>
@@ -248,11 +173,11 @@ export default async function LobbyPage({ searchParams }: { searchParams?: { err
                     required
                   >
                     <option value="" className="bg-gray-800">请选择游戏主题</option>
-                    {themes.map((t) => (
+                    {themes?.map((t) => (
                       <option key={t.id} value={t.id} className="bg-gray-800">
                         {t.title}
                       </option>
-                    ))}
+                    )) || []}
                   </select>
                   <ChevronDown className="w-4 h-4 text-gray-400" />
                 </div>
