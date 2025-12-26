@@ -1,21 +1,15 @@
-// /middleware.ts - 修复版本（严格单设备登录 + 详细日志）
+// /middleware.ts - 终极严格版本（无宽限期）
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 // ==================== 配置与工具函数 ====================
 
-/**
- * 检查是否是管理员邮箱
- */
 function isAdminEmail(email: string | undefined | null): boolean {
   if (!email) return false;
   const adminEmails = process.env.ADMIN_EMAILS?.split(',') || ['2200691917@qq.com'];
   return adminEmails.some(adminEmail => adminEmail.trim().toLowerCase() === email.toLowerCase());
 }
 
-/**
- * 检查是否受保护的游戏路径
- */
 function isProtectedGamePath(path: string): boolean {
   const exactPaths = ['/lobby', '/game', '/profile', '/themes', '/game-history'];
   if (exactPaths.includes(path)) return true;
@@ -23,9 +17,6 @@ function isProtectedGamePath(path: string): boolean {
   return prefixPaths.some(prefix => path.startsWith(prefix));
 }
 
-/**
- * 检查是否公开路径（不需要认证）
- */
 function isPublicPath(path: string): boolean {
   const exactPublicPaths = ['/', '/login', '/account-expired', '/renew', '/admin', '/admin/unauthorized', '/login/expired'];
   if (exactPublicPaths.includes(path)) return true;
@@ -33,9 +24,6 @@ function isPublicPath(path: string): boolean {
   return prefixPublicPaths.some(prefix => path.startsWith(prefix));
 }
 
-/**
- * 在中间件中安全创建Supabase客户端
- */
 function createMiddlewareClient(request: NextRequest) {
   const response = NextResponse.next();
 
@@ -71,9 +59,6 @@ function createMiddlewareClient(request: NextRequest) {
   return { supabase, response };
 }
 
-/**
- * 设置管理员验证Cookie
- */
 function setAdminKeyVerifiedCookie(response: NextResponse) {
   response.cookies.set({
     name: 'admin_key_verified',
@@ -87,9 +72,6 @@ function setAdminKeyVerifiedCookie(response: NextResponse) {
   return response;
 }
 
-/**
- * 获取已验证的用户信息
- */
 async function getVerifiedUser(supabase: any) {
   try {
     const { data: { user }, error } = await supabase.auth.getUser();
@@ -106,9 +88,6 @@ async function getVerifiedUser(supabase: any) {
   }
 }
 
-/**
- * 创建带有已验证用户头信息的响应
- */
 function createResponseWithUserHeaders(request: NextRequest, user: any, isAdmin: boolean = false) {
   const headers = new Headers(request.headers);
   headers.set('x-verified-user-id', user.id);
@@ -132,11 +111,8 @@ function createResponseWithUserHeaders(request: NextRequest, user: any, isAdmin:
   });
 }
 
-// ==================== 核心：多设备检测（严格单设备） ====================
+// ==================== 核心：严格单设备检测（无宽限期） ====================
 
-/**
- * 执行严格单设备检测
- */
 async function performStrictDeviceCheck(
   supabase: any,
   user: any,
@@ -152,28 +128,25 @@ async function performStrictDeviceCheck(
     
     if (!currentSession) {
       console.warn(`[${requestId}] 无法获取当前会话`);
-      return { shouldContinue: true }; // 没有会话，让其他逻辑处理
+      return { shouldContinue: true };
     }
     
-    // 2. 生成当前会话标识
-    const currentSessionId = `sess_${user.id}_${currentSession.access_token.substring(0, 12)}`;
+    // 2. 生成当前会话标识（必须与登录表单一致！）
+    const tokenPrefix = currentSession.access_token.substring(0, 12); // 12位，与登录表单一致
+    const currentSessionId = `sess_${user.id}_${tokenPrefix}`;
     
-    // 🔥 添加详细日志
-    console.log(`[${requestId}] 🔍 多设备检测详情:`, {
+    // 🔥 详细日志
+    console.log(`[${requestId}] 🔥 严格单设备检测开始`, {
       用户: user.email,
-      当前会话标识: currentSessionId,
-      存储的会话标识: profile.last_login_session,
-      存储的最后活动时间: profile.last_login_at,
-      当前时间: now.toISOString()
+      当前设备会话: currentSessionId,
+      存储的会话: profile.last_login_session || '空',
+      存储时间: profile.last_login_at || '空'
     });
     
-    // 3. 🔥 严格单设备检测逻辑
-    
-    // 情况A：用户没有会话记录（新用户或异常情况）
+    // 3. 如果没有会话记录，设置并允许
     if (!profile.last_login_session) {
-      console.log(`[${requestId}] 用户无会话记录，设置初始会话: ${currentSessionId}`);
+      console.log(`[${requestId}] 首次设置会话: ${currentSessionId}`);
       
-      // 同步设置会话记录
       await supabase
         .from('profiles')
         .update({
@@ -186,9 +159,9 @@ async function performStrictDeviceCheck(
       return { shouldContinue: true };
     }
     
-    // 情况B：检测到初始会话标识（来自注册API）
+    // 4. 如果是初始会话，更新为真实会话
     if (profile.last_login_session.startsWith('init_')) {
-      console.log(`[${requestId}] 检测到初始会话 ${profile.last_login_session}，更新为真实会话 ${currentSessionId}`);
+      console.log(`[${requestId}] 更新初始会话: ${profile.last_login_session} -> ${currentSessionId}`);
       
       await supabase
         .from('profiles')
@@ -202,46 +175,15 @@ async function performStrictDeviceCheck(
       return { shouldContinue: true };
     }
     
-    // 情况C：会话完全匹配 - 正常访问
+    // 5. 🔥 严格比较：会话必须完全匹配！
     if (profile.last_login_session === currentSessionId) {
-      console.log(`[${requestId}] ✅ 会话匹配: ${currentSessionId}，更新最后活动时间`);
+      console.log(`[${requestId}] ✅ 会话匹配: ${currentSessionId}`);
       
-      // 🔥 关键修复：每次请求都更新最后活动时间
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          last_login_at: now.toISOString(), // 实时更新时间！
-          updated_at: now.toISOString()
-        })
-        .eq('id', user.id);
-      
-      if (updateError) {
-        console.error(`[${requestId}] 更新活动时间失败:`, updateError);
-      }
-      
-      return { shouldContinue: true };
-    }
-    
-    // 情况D：会话不匹配 - 检查最后活动时间
-    const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
-    const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
-    
-    console.log(`[${requestId}] ❌ 会话不匹配！`, {
-      存储的会话: profile.last_login_session,
-      当前会话: currentSessionId,
-      时间差: `${timeSinceLastLogin}ms (${Math.round(timeSinceLastLogin/1000)}秒)`,
-      是否在30秒内: timeSinceLastLogin < 3000
-    });
-    
-    // 🔥 如果用户最后活动时间在30秒内，允许更新会话
-    if (timeSinceLastLogin < 3000) { // 30秒 = 3000ms
-      console.log(`[${requestId}] ⚡ 用户在30秒内有活动，更新会话标识为: ${currentSessionId}`);
-      
+      // 更新活动时间
       await supabase
         .from('profiles')
         .update({
-          last_login_session: currentSessionId,
-          last_login_at: now.toISOString(), // 同时更新时间！
+          last_login_at: now.toISOString(),
           updated_at: now.toISOString()
         })
         .eq('id', user.id);
@@ -249,37 +191,27 @@ async function performStrictDeviceCheck(
       return { shouldContinue: true };
     }
     
-    // 情况E：多设备登录 - 强制退出
-    console.log(`[${requestId}] 🔴 检测到多设备登录，强制退出: ${user.email}`, {
-      原设备最后活动: lastLoginTime?.toISOString(),
-      当前设备: currentSessionId,
-      时间差超过: `${Math.round(timeSinceLastLogin/1000)}秒`
+    // 6. 🔥 会话不匹配 - 立即强制退出（无宽限期！）
+    console.log(`[${requestId}] 🔴 会话不匹配！强制退出`, {
+      存储会话: profile.last_login_session,
+      当前会话: currentSessionId,
+      是否相同: profile.last_login_session === currentSessionId
     });
     
     const redirectUrl = new URL('/login/expired', request.url);
     redirectUrl.searchParams.set('email', user.email || '');
-    redirectUrl.searchParams.set('reason', 'multi_device');
-    redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
-    redirectUrl.searchParams.set('current_session', currentSessionId.substring(0, 20));
-    
-    if (lastLoginTime) {
-      redirectUrl.searchParams.set('last_login_time', lastLoginTime.toISOString());
-    }
+    redirectUrl.searchParams.set('reason', 'strict_device_check');
+    redirectUrl.searchParams.set('stored_session', profile.last_login_session.substring(0, 30));
+    redirectUrl.searchParams.set('current_session', currentSessionId.substring(0, 30));
     
     return { shouldContinue: false, redirectUrl: redirectUrl.toString() };
     
   } catch (error) {
     console.error(`[${requestId}] 多设备检测异常:`, error);
-    // 出错时允许继续，避免阻塞用户
     return { shouldContinue: true };
   }
 }
 
-// ==================== 核心：会员过期检测 ====================
-
-/**
- * 执行会员过期检测（严格检查，无自动续期）
- */
 async function performMembershipCheck(
   supabase: any,
   user: any,
@@ -288,16 +220,11 @@ async function performMembershipCheck(
 ) {
   const now = new Date();
   
-  // 1. 检查会员有效期字段是否存在
   if (!profile.account_expires_at) {
-    console.log(`[${requestId}] 用户 ${user.email} 无会员有效期记录`);
-    
-    // 无论是新用户还是老用户，无有效期就认为是过期
-    // 用户需要通过购买密钥来设置有效期
+    console.log(`[${requestId}] 用户无会员有效期记录`);
     return { isExpired: true };
   }
   
-  // 2. 检查是否已过期
   const expiresAt = new Date(profile.account_expires_at);
   
   if (expiresAt < now) {
@@ -305,7 +232,6 @@ async function performMembershipCheck(
     return { isExpired: true };
   }
   
-  // 3. 会员有效
   console.log(`[${requestId}] 会员有效，到期时间: ${expiresAt.toLocaleString('zh-CN')}`);
   return { isExpired: false };
 }
@@ -389,7 +315,6 @@ export async function middleware(request: NextRequest) {
         let profile = null;
         
         try {
-          // 🔥 只查询实际存在的字段
           const { data, error: profileError } = await supabase
             .from('profiles')
             .select('id, email, account_expires_at, last_login_at, last_login_session, created_at, nickname')
@@ -397,11 +322,10 @@ export async function middleware(request: NextRequest) {
             .maybeSingle();
           
           if (profileError || !data) {
-            console.warn(`[${requestId}] 查询用户资料失败或不存在:`, profileError?.message);
+            console.warn(`[${requestId}] 查询用户资料失败:`, profileError?.message);
             
-            // 创建默认用户资料（仅包含必要字段）
+            // 创建默认用户资料
             const now = new Date();
-            // 默认30天有效期（仅为了容错，实际应由注册API设置）
             const defaultExpires = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
             const initialSessionId = `init_${user.id}_${Date.now()}`;
             
@@ -422,7 +346,6 @@ export async function middleware(request: NextRequest) {
             
             if (createError) {
               console.error(`[${requestId}] 创建用户资料失败:`, createError);
-              // 创建失败，使用模拟数据继续
               profile = {
                 id: user.id,
                 email: user.email,
@@ -440,7 +363,6 @@ export async function middleware(request: NextRequest) {
           }
         } catch (profileError) {
           console.error(`[${requestId}] 获取用户资料异常:`, profileError);
-          // 异常时创建简单资料继续
           const now = new Date();
           profile = {
             id: user.id,
@@ -458,7 +380,7 @@ export async function middleware(request: NextRequest) {
           return createResponseWithUserHeaders(request, user);
         }
         
-        // ============ 🔥 会员过期检测（优先检查）============
+        // ============ 会员过期检测 ============
         const membershipCheck = await performMembershipCheck(supabase, user, profile, requestId);
         
         if (membershipCheck.isExpired) {
@@ -466,7 +388,7 @@ export async function middleware(request: NextRequest) {
           return NextResponse.redirect(new URL('/account-expired', request.url));
         }
         
-        // ============ 🔥 多设备检测 ============
+        // ============ 🔥 严格单设备检测 ============
         const deviceCheck = await performStrictDeviceCheck(supabase, user, profile, requestId, request);
         
         if (!deviceCheck.shouldContinue) {
@@ -477,19 +399,15 @@ export async function middleware(request: NextRequest) {
         // ============ 所有检查通过 ============
         console.log(`[${requestId}] 所有安全检查通过，放行用户`);
         
-        // 🔥 双保险：确保更新用户最后活动时间
+        // 更新最后活动时间
         try {
-          const updateResult = await supabase
+          await supabase
             .from('profiles')
             .update({
               last_login_at: new Date().toISOString(),
               updated_at: new Date().toISOString()
             })
             .eq('id', user.id);
-          
-          if (updateResult.error) {
-            console.error(`[${requestId}] 最后活动时间更新失败:`, updateResult.error);
-          }
         } catch (error) {
           console.error(`[${requestId}] 更新活动时间异常:`, error);
         }
