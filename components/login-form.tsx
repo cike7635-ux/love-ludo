@@ -1,4 +1,4 @@
-// /components/login-form.tsx - 同步中间件修复版本
+// /components/login-form.tsx - 恢复版（只做登录，不检查偏好）
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -15,10 +15,9 @@ import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
  * 生成唯一的会话标识（与中间件同步）
  */
 function generateSessionId(userId: string, accessToken: string): string {
-  const tokenPart = accessToken.substring(0, 16);
+  const tokenPart = accessToken.substring(0, 12);
   const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 10);
-  return `sess_${userId}_${tokenPart}_${timestamp}_${random}`;
+  return `sess_${userId}_${tokenPart}_${timestamp}`;
 }
 
 export function LoginForm({
@@ -55,6 +54,7 @@ export function LoginForm({
 
     try {
       const supabase = createClient();
+
       console.log("[LoginForm] 尝试登录:", email.trim());
 
       const { data, error: authError } = await supabase.auth.signInWithPassword({
@@ -67,7 +67,7 @@ export function LoginForm({
         if (authError.message.includes('Invalid login credentials')) {
           throw new Error('邮箱或密码错误');
         } else if (authError.message.includes('Email not confirmed')) {
-          throw new Error('邮箱未验证，请检查收件箱并确认注册');
+          throw new Error('邮箱未验证，请检查收件箱确认注册');
         } else {
           throw new Error(`登录失败: ${authError.message}`);
         }
@@ -85,7 +85,7 @@ export function LoginForm({
 
       console.log("[LoginForm] 生成会话标识:", sessionId.substring(0, 50) + '...');
 
-      // 🔥 原子性更新用户会话
+      // 🔥 原子性更新用户会话（使用upsert确保一致性）
       const { error: updateError } = await supabase
         .from('profiles')
         .upsert({
@@ -137,7 +137,7 @@ export function LoginForm({
       // 显示成功消息
       setSuccessMessage("✅ 登录成功！");
 
-      // 🔥 确保数据库更新完成后再跳转
+      // 🔥 确保数据库更新完成后再跳转（不检查偏好设置）
       setTimeout(() => {
         console.log('[LoginForm] 重定向到:', redirectTo);
         window.location.href = redirectTo;
