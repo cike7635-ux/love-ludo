@@ -1,5 +1,4 @@
-// /components/login-form.tsx (安全版本)
-// 确保会话更新完成再重定向
+// /components/login-form.tsx - 完整修复版本
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -68,29 +67,71 @@ export function LoginForm({
 
       console.log("[LoginForm] 登录成功，更新会话标识");
 
-      // 🔥 关键修复：同步更新会话标识
+      // 🔥 关键修复：原子性更新会话标识
       if (data?.user && data?.session) {
         try {
           const sessionFingerprint = `sess_${data.user.id}_${data.session.access_token.substring(0, 12)}`;
+          const now = new Date().toISOString();
 
           console.log("[LoginForm] 设置会话标识:", sessionFingerprint);
 
+          // 使用upsert确保原子性，防止并发问题
           const { error: updateError } = await supabase
             .from('profiles')
-            .update({
+            .upsert({
+              id: data.user.id,
+              email: data.user.email,
               last_login_session: sessionFingerprint,
-              last_login_at: new Date().toISOString(),
-              updated_at: new Date().toISOString()
-            })
-            .eq('id', data.user.id);
+              last_login_at: now,
+              updated_at: now,
+              // 如果其他字段不存在，设置默认值
+              avatar_url: '',
+              preferences: { theme: 'default' }
+            }, {
+              onConflict: 'id',
+              ignoreDuplicates: false
+            });
 
           if (updateError) {
             console.error('[登录] 更新会话记录失败:', updateError);
+            
+            // 🔥 关键：尝试重试3次
+            let retryCount = 0;
+            let success = false;
+            
+            while (retryCount < 3 && !success) {
+              console.log(`[登录] 重试更新会话 (${retryCount + 1}/3)`);
+              const { error: retryError } = await supabase
+                .from('profiles')
+                .upsert({
+                  id: data.user.id,
+                  email: data.user.email,
+                  last_login_session: sessionFingerprint,
+                  last_login_at: now,
+                  updated_at: now
+                }, {
+                  onConflict: 'id'
+                });
+              
+              if (!retryError) {
+                success = true;
+                console.log('[登录] 重试更新成功');
+                break;
+              }
+              
+              retryCount++;
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            
+            if (!success) {
+              console.error('[登录] 多次重试后仍失败，但继续登录流程');
+            }
           } else {
             console.log('[登录] 会话标识更新完成');
           }
         } catch (sessionErr) {
           console.error('[登录] 处理会话时异常:', sessionErr);
+          // 继续执行，不阻断登录流程
         }
       }
 
@@ -101,7 +142,7 @@ export function LoginForm({
       setTimeout(() => {
         console.log('✅ 重定向到:', redirectTo);
         window.location.href = redirectTo;
-      }, 500); // 500ms延迟确保状态同步
+      }, 800); // 增加到800ms，确保数据库完全同步
 
     } catch (error: unknown) {
       console.error("[LoginForm] 登录异常:", error);
@@ -110,7 +151,6 @@ export function LoginForm({
     }
   };
 
-  // ... UI部分保持不变
   return (
     <div className={cn("", className)} {...props}>
       <form onSubmit={handleLogin} className="space-y-4">
@@ -229,7 +269,7 @@ export function LoginForm({
               }}
             >
               联系客服
-            </Link> {/* 这里改为 </Link> */}
+            </Link>
           </p>
         </div>
       </form>

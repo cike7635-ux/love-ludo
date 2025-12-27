@@ -37,7 +37,6 @@ function isPublicPath(path: string): boolean {
  * 在中间件中安全创建Supabase客户端
  */
 function createMiddlewareClient(request: NextRequest) {
-  // 创建一个响应对象
   const response = NextResponse.next();
 
   const supabase = createServerClient(
@@ -54,11 +53,11 @@ function createMiddlewareClient(request: NextRequest) {
               response.cookies.set({
                 name,
                 value,
-                path: '/', // 设置为根路径，对所有请求有效
+                path: '/',
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 sameSite: 'lax',
-                maxAge: 60 * 60 * 24, // 24小时
+                maxAge: 60 * 60 * 24,
               });
             } else {
               response.cookies.set(name, value, options);
@@ -73,23 +72,23 @@ function createMiddlewareClient(request: NextRequest) {
 }
 
 /**
- * 设置管理员验证Cookie（路径设为根目录）
+ * 设置管理员验证Cookie
  */
 function setAdminKeyVerifiedCookie(response: NextResponse) {
   response.cookies.set({
     name: 'admin_key_verified',
     value: 'true',
-    path: '/', // 设置为根路径，使Cookie对所有请求有效
+    path: '/',
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
-    maxAge: 60 * 60 * 24, // 24小时
+    maxAge: 60 * 60 * 24,
   });
   return response;
 }
 
 /**
- * 获取已验证的用户信息（使用安全的getUser()方法）
+ * 获取已验证的用户信息
  */
 async function getVerifiedUser(supabase: any) {
   try {
@@ -145,7 +144,6 @@ async function updateUserActivity(supabase: any, userId: string, requestId: stri
   try {
     const now = new Date().toISOString();
     
-    // 查询当前最后活动时间
     const { data: profile } = await supabase
       .from('profiles')
       .select('last_login_at')
@@ -156,7 +154,6 @@ async function updateUserActivity(supabase: any, userId: string, requestId: stri
       const lastUpdate = new Date(profile.last_login_at);
       const timeSinceUpdate = Date.now() - lastUpdate.getTime();
       
-      // 每60秒更新一次，避免过于频繁
       if (timeSinceUpdate > 60000) {
         await supabase
           .from('profiles')
@@ -169,7 +166,6 @@ async function updateUserActivity(supabase: any, userId: string, requestId: stri
         console.log(`[${requestId}] 更新用户活动时间`);
       }
     } else {
-      // 如果没有最后活动时间，直接设置
       await supabase
         .from('profiles')
         .update({ 
@@ -184,7 +180,92 @@ async function updateUserActivity(supabase: any, userId: string, requestId: stri
 }
 
 /**
- * 处理缺失的用户资料
+ * 🔥 关键修复：严格的多设备检测函数
+ */
+async function performStrictDeviceCheck(
+  supabase: any, 
+  user: any, 
+  currentSessionId: string, 
+  requestId: string,
+  profile: any
+): Promise<{ allowed: boolean; reason: string; details?: any }> {
+  const now = new Date();
+  
+  // 1. 确保会话标识存在（不应该发生，因为SQL已经修复，但安全起见）
+  if (!profile.last_login_session) {
+    console.log(`[${requestId}] 用户会话标识为空，设置为当前会话`);
+    
+    await supabase
+      .from('profiles')
+      .update({
+        last_login_session: currentSessionId,
+        last_login_at: now.toISOString(),
+        updated_at: now.toISOString()
+      })
+      .eq('id', user.id);
+    
+    return { allowed: true, reason: 'session_initialized' };
+  }
+  
+  // 2. 检查是否是初始会话（init_开头）
+  if (profile.last_login_session.startsWith('init_')) {
+    console.log(`[${requestId}] 更新初始会话为真实会话`);
+    
+    await supabase
+      .from('profiles')
+      .update({
+        last_login_session: currentSessionId,
+        last_login_at: now.toISOString(),
+        updated_at: now.toISOString()
+      })
+      .eq('id', user.id);
+    
+    return { allowed: true, reason: 'initial_session_updated' };
+  }
+  
+  // 3. 严格比对会话标识
+  if (profile.last_login_session === currentSessionId) {
+    console.log(`[${requestId}] 会话匹配，允许访问`);
+    return { allowed: true, reason: 'session_matched' };
+  }
+  
+  // 4. 检查30秒宽限期（仅用于token刷新）
+  const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+  if (lastLoginTime) {
+    const timeSinceLastLogin = now.getTime() - lastLoginTime.getTime();
+    if (timeSinceLastLogin < 30000) { // 30秒
+      console.log(`[${requestId}] 30秒宽限期内，更新会话标识`);
+      
+      await supabase
+        .from('profiles')
+        .update({
+          last_login_session: currentSessionId,
+          updated_at: now.toISOString()
+        })
+        .eq('id', user.id);
+      
+      return { allowed: true, reason: 'grace_period' };
+    }
+  }
+  
+  // 5. 多设备登录 → 拒绝
+  console.log(`[${requestId}] 🔥 检测到多设备登录`);
+  console.log(`[${requestId}] 存储会话: ${profile.last_login_session}`);
+  console.log(`[${requestId}] 当前会话: ${currentSessionId}`);
+  
+  return { 
+    allowed: false, 
+    reason: 'multi_device',
+    details: {
+      stored_session: profile.last_login_session,
+      current_session: currentSessionId,
+      last_login: profile.last_login_at
+    }
+  };
+}
+
+/**
+ * 🔥 关键修复：处理缺失的用户资料
  */
 async function handleMissingProfile(
   supabase: any, 
@@ -193,20 +274,24 @@ async function handleMissingProfile(
   currentPath: string, 
   request: NextRequest
 ): Promise<NextResponse> {
-  console.log(`[${requestId}] 尝试创建用户基本资料: ${user.email}`);
+  console.log(`[${requestId}] 用户 ${user.email} 资料不存在，创建完整资料`);
   
   try {
     const now = new Date().toISOString();
+    const initialSessionId = `init_${user.id}_${Date.now()}`;
+    
     const { error: createError } = await supabase
       .from('profiles')
       .insert({
         id: user.id,
         email: user.email,
+        account_expires_at: null, // 没有会员期，需要续费
+        last_login_at: now,
+        last_login_session: initialSessionId,
         created_at: now,
         updated_at: now,
-        // 不设置 account_expires_at，让用户去续费
         avatar_url: '',
-        preferences: { theme: 'default' },
+        preferences: { theme: 'default' }
       });
     
     if (createError) {
@@ -214,14 +299,12 @@ async function handleMissingProfile(
       return NextResponse.redirect(new URL('/account-expired', request.url));
     }
     
-    console.log(`[${requestId}] 用户基本资料创建成功，重定向到续费页面`);
+    console.log(`[${requestId}] 新用户资料创建成功，重定向到续费页面`);
     
-    // 创建成功后，重定向到续费页面（因为新用户没有会员期）
     if (currentPath !== '/account-expired' && currentPath !== '/renew') {
       return NextResponse.redirect(new URL('/account-expired', request.url));
     }
     
-    // 如果已经在续费页面，返回正常响应
     return NextResponse.next();
     
   } catch (createErr) {
@@ -236,13 +319,11 @@ export async function middleware(request: NextRequest) {
   const currentPath = request.nextUrl.pathname;
   const requestId = Math.random().toString(36).substring(7);
   
-  // 简化日志，避免过多输出
   if (!currentPath.startsWith('/_next') && !currentPath.startsWith('/favicon')) {
     console.log(`[${requestId}] 中间件: ${currentPath}`);
   }
   
   try {
-    // 使用新的安全客户端创建方式
     const { supabase, response } = createMiddlewareClient(request);
     
     // ============ 路径分类处理 ============
@@ -255,17 +336,15 @@ export async function middleware(request: NextRequest) {
       return response;
     }
     
-    // 2. API路径处理 - 特殊处理/admin/api路径
+    // 2. API路径处理
     if (currentPath.startsWith('/api/admin/')) {
       console.log(`[${requestId}] 处理管理API: ${currentPath}`);
       
-      // 检查管理员Cookie
       const adminKeyVerified = request.cookies.get('admin_key_verified');
       
       if (!adminKeyVerified || adminKeyVerified.value !== 'true') {
         console.log(`[${requestId}] 管理API未通过密钥验证`);
         
-        // 作为临时方案，也检查referer
         const referer = request.headers.get('referer');
         const isFromAdminPage = referer?.includes('/admin/');
         
@@ -289,14 +368,12 @@ export async function middleware(request: NextRequest) {
       return response;
     }
     
-    // 3. 管理员路径处理（独立验证）
+    // 3. 管理员路径处理
     if (currentPath.startsWith('/admin')) {
-      // 管理员登录页面直接放行
       if (currentPath === '/admin' || currentPath === '/admin/login') {
         return response;
       }
       
-      // 其他管理员页面需要验证管理员密钥
       const adminKeyVerified = request.cookies.get('admin_key_verified');
       
       if (!adminKeyVerified || adminKeyVerified.value !== 'true') {
@@ -306,7 +383,6 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(redirectUrl);
       }
       
-      // 获取已验证的用户
       const { user, error } = await getVerifiedUser(supabase);
       
       if (error || !user) {
@@ -314,7 +390,6 @@ export async function middleware(request: NextRequest) {
         return NextResponse.redirect(new URL('/admin', request.url));
       }
       
-      // 验证管理员邮箱
       if (!isAdminEmail(user.email)) {
         console.log(`[${requestId}] 非管理员访问后台: ${user.email}`);
         return NextResponse.redirect(new URL('/admin/unauthorized', request.url));
@@ -322,7 +397,6 @@ export async function middleware(request: NextRequest) {
       
       console.log(`[${requestId}] 管理员验证通过: ${user.email}`);
       
-      // 重新设置Cookie，确保路径正确
       const adminResponse = setAdminKeyVerifiedCookie(
         createResponseWithUserHeaders(request, user, true)
       );
@@ -353,16 +427,21 @@ export async function middleware(request: NextRequest) {
         // ============ 获取用户资料 ============
         let profile = null;
         try {
-          // 🔥 关键修复：使用 maybeSingle 避免 "No rows returned" 错误
+          // 🔥 关键修复：使用 single() 而不是 maybeSingle()
           const { data, error: profileError } = await supabase
             .from('profiles')
             .select('id, email, account_expires_at, last_login_at, last_login_session, created_at')
             .eq('id', user.id)
-            .maybeSingle(); // ✅ 使用 maybeSingle 而不是 single()
+            .single(); // ✅ 期望有且只有一条记录
           
           if (profileError) {
-            console.warn(`[${requestId}] 查询用户资料失败: ${profileError.message}`);
-            // 查询失败，创建基本用户资料
+            // 检查是否是"no rows"错误
+            if (profileError.code === 'PGRST116' || profileError.message.includes('No rows found')) {
+              console.log(`[${requestId}] 用户资料不存在 (PGRST116)`);
+              return await handleMissingProfile(supabase, user, requestId, currentPath, request);
+            }
+            
+            console.warn(`[${requestId}] 查询用户资料失败:`, profileError.message);
             return await handleMissingProfile(supabase, user, requestId, currentPath, request);
           }
           
@@ -372,24 +451,20 @@ export async function middleware(request: NextRequest) {
           return await handleMissingProfile(supabase, user, requestId, currentPath, request);
         }
         
-        // 🔥 关键修复：处理用户资料不存在的情况
         if (!profile) {
           console.log(`[${requestId}] 用户资料不存在`);
           return await handleMissingProfile(supabase, user, requestId, currentPath, request);
         }
         
-        // ============ 会员过期验证（一视同仁，取消新用户特权） ============
+        // ============ 会员过期验证 ============
         const now = new Date();
         
-        // 🔥 关键修复：统一检查逻辑
         if (!profile.account_expires_at) {
-          // 情况1：没有设置有效期 → 需要续费（包括新用户）
-          console.log(`[${requestId}] 用户未设置会员有效期，重定向到续费页面`);
+          console.log(`[${requestId}] 用户未设置会员有效期`);
           if (currentPath !== '/account-expired' && currentPath !== '/renew') {
             return NextResponse.redirect(new URL('/account-expired', request.url));
           }
         } else {
-          // 情况2：有有效期，检查是否过期
           const expiryDate = new Date(profile.account_expires_at);
           const isExpired = expiryDate < now;
           
@@ -403,9 +478,8 @@ export async function middleware(request: NextRequest) {
           }
         }
         
-        // ============ 严格的多设备登录验证（取消新用户特权） ============
+        // ============ 🔥 关键：严格的多设备登录验证 ============
         try {
-          // 获取当前会话信息
           const { data: { session: currentSession } } = await supabase.auth.getSession();
           
           if (!currentSession) {
@@ -415,120 +489,39 @@ export async function middleware(request: NextRequest) {
             return NextResponse.redirect(redirectUrl);
           }
           
-          // 生成当前会话标识（与现有格式一致）
+          // 生成当前会话标识
           const currentSessionId = `sess_${currentSession.user.id}_${currentSession.access_token.substring(0, 12)}`;
           
-          console.log(`[${requestId}] 当前会话标识: ${currentSessionId}`);
-          console.log(`[${requestId}] 存储会话标识: ${profile.last_login_session}`);
+          // 🔥 执行严格的多设备检测
+          const deviceCheck = await performStrictDeviceCheck(
+            supabase, 
+            user, 
+            currentSessionId, 
+            requestId,
+            profile
+          );
           
-          // 🔥 关键修复1：检测并处理初始会话标识
-          if (profile.last_login_session && profile.last_login_session.startsWith('init_')) {
-            console.log(`[${requestId}] 检测到初始会话标识，更新为真实会话`);
+          if (!deviceCheck.allowed) {
+            console.log(`[${requestId}] 多设备检测不通过: ${deviceCheck.reason}`);
             
-            await supabase
-              .from('profiles')
-              .update({ 
-                last_login_session: currentSessionId,
-                last_login_at: now.toISOString(),
-                updated_at: now.toISOString()
-              })
-              .eq('id', user.id);
+            const redirectUrl = new URL('/login/expired', request.url);
+            redirectUrl.searchParams.set('reason', deviceCheck.reason);
+            redirectUrl.searchParams.set('email', user.email || '');
             
-            console.log(`[${requestId}] 初始会话已更新，正常放行`);
-            
-            // 异步更新活动时间
-            updateUserActivity(supabase, user.id, requestId).catch(() => {});
-            
-            return createResponseWithUserHeaders(request, user);
-          }
-          
-          // 🔥 关键修复2：处理空会话标识
-          if (!profile.last_login_session) {
-            console.log(`[${requestId}] 用户会话标识为空，初始化为真实会话`);
-            
-            await supabase
-              .from('profiles')
-              .update({ 
-                last_login_session: currentSessionId,
-                last_login_at: now.toISOString(),
-                updated_at: now.toISOString()
-              })
-              .eq('id', user.id);
-            
-            console.log(`[${requestId}] 空会话已初始化，正常放行`);
-            
-            // 异步更新活动时间
-            updateUserActivity(supabase, user.id, requestId).catch(() => {});
-            
-            return createResponseWithUserHeaders(request, user);
-          }
-          
-          // 🔥 关键修复3：添加登录宽限期检测（只有30秒，取消新用户特权）
-          const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
-          const timeSinceLastLogin = lastLoginTime ? now.getTime() - lastLoginTime.getTime() : 0;
-          
-          // 为刚登录的用户提供30秒宽限期（仅用于token刷新）
-          if (timeSinceLastLogin < 30000) { // 30秒
-            console.log(`[${requestId}] 用户刚登录（${Math.round(timeSinceLastLogin/1000)}秒前），处于宽限期内`);
-            
-            // 确保会话标识是最新的
-            await supabase
-              .from('profiles')
-              .update({ 
-                last_login_session: currentSessionId,
-                updated_at: now.toISOString()
-              })
-              .eq('id', user.id);
-              
-            console.log(`[${requestId}] 宽限期内会话标识已更新，正常放行`);
-            
-            // 异步更新活动时间
-            updateUserActivity(supabase, user.id, requestId).catch(() => {});
-            
-            return createResponseWithUserHeaders(request, user);
-          }
-          
-          // 🔥 关键修复4：严格的多设备检测（取消新用户特权，一视同仁）
-          if (profile.last_login_session) {
-            // 情况1：会话完全匹配 - 正常访问
-            if (profile.last_login_session === currentSessionId) {
-              console.log(`[${requestId}] 会话标识匹配，正常访问`);
-              
-              // 异步更新活动时间
-              updateUserActivity(supabase, user.id, requestId).catch(() => {});
-              
-              return createResponseWithUserHeaders(request, user);
+            if (deviceCheck.details) {
+              redirectUrl.searchParams.set('stored_session', deviceCheck.details.stored_session.substring(0, 20));
+              redirectUrl.searchParams.set('current_session', deviceCheck.details.current_session.substring(0, 20));
             }
-            // 情况2：会话不匹配 - 多设备登录，强制退出
-            else {
-              console.log(`[${requestId}] 检测到多设备登录，强制退出`);
-              console.log(`[${requestId}] 存储: ${profile.last_login_session}, 当前: ${currentSessionId}`);
-              
-              // 记录被踢出的设备信息
-              const redirectUrl = new URL('/login/expired', request.url);
-              redirectUrl.searchParams.set('email', user.email || '');
-              redirectUrl.searchParams.set('reason', 'multi_device');
-              redirectUrl.searchParams.set('last_session', profile.last_login_session.substring(0, 20));
-              
-              return NextResponse.redirect(redirectUrl);
-            }
-          } else {
-            // 数据库中无会话标识，初始化新的会话
-            console.log(`[${requestId}] 初始化新的会话标识`);
-            await supabase
-              .from('profiles')
-              .update({ 
-                last_login_at: now.toISOString(),
-                last_login_session: currentSessionId,
-                updated_at: now.toISOString()
-              })
-              .eq('id', user.id);
-              
-            // 异步更新活动时间
-            updateUserActivity(supabase, user.id, requestId).catch(() => {});
             
-            return createResponseWithUserHeaders(request, user);
+            return NextResponse.redirect(redirectUrl);
           }
+          
+          console.log(`[${requestId}] 多设备检测通过: ${deviceCheck.reason}`);
+          
+          // 异步更新活动时间
+          updateUserActivity(supabase, user.id, requestId).catch(() => {});
+          
+          return createResponseWithUserHeaders(request, user);
           
         } catch (sessionError) {
           console.error(`[${requestId}] 会话验证错误:`, sessionError);
@@ -546,11 +539,9 @@ export async function middleware(request: NextRequest) {
     }
     
     // 5. 其他未分类路径
-    // 对于其他路径，我们仍然尝试获取用户信息（如果存在）
     try {
       const { user } = await getVerifiedUser(supabase);
       if (user) {
-        // 如果有用户，将信息传递给页面
         return createResponseWithUserHeaders(request, user);
       }
     } catch (e) {
