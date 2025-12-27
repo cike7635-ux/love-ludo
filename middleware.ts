@@ -5,8 +5,9 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 function generateSessionId(userId: string, accessToken: string): string {
   const tokenPart = accessToken.substring(0, 12);
-  // 🚀 移除时间戳，确保同一设备登录生成的会话标识相同
-  return `sess_${userId}_${tokenPart}`;
+  const random = Math.random().toString(36).substring(2, 8); // 6位随机字符串
+  // 🚀 添加随机数，确保每次登录生成的会话标识都不同
+  return `sess_${userId}_${tokenPart}_${random}`;
 }
 
 function isAdminEmail(email: string | undefined | null): boolean {
@@ -104,9 +105,9 @@ async function updateUserActivity(supabase: any, userId: string) {
 }
 
 /**
- * 🔥 关键修复：严格的多设备检测（3秒宽限期）
+ * 🔥 增强的多设备检测逻辑
  */
-async function performStrictDeviceCheck(
+async function performEnhancedDeviceCheck(
   supabase: any, 
   user: any, 
   currentSessionId: string, 
@@ -131,9 +132,11 @@ async function performStrictDeviceCheck(
   // 3. 🔥 核心比对：会话标识必须完全匹配
   const storedSession = profile.last_login_session;
   
-  console.log(`[${requestId}] 🔍 会话检查:`, {
+  console.log(`[${requestId}] 🔍 会话检查详情:`, {
     current: currentSessionId,
     stored: storedSession,
+    userId: user.id,
+    email: user.email,
     match: storedSession === currentSessionId
   });
   
@@ -146,22 +149,36 @@ async function performStrictDeviceCheck(
     return { allowed: true, reason: 'session_matched' };
   }
   
-  // 🔥 4. 3秒宽限期（仅用于token刷新）
+  // 🔥 4. 检测是否是真正的多设备登录（而不是token刷新）
   const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
+  
   if (lastLoginTime) {
     const timeSinceLastLogin = Date.now() - lastLoginTime.getTime();
-    if (timeSinceLastLogin < 3000) { // 🔥 3秒宽限期
-      console.log(`[${requestId}] 3秒宽限期内，更新会话标识`);
-      
+    console.log(`[${requestId}] ⏰ 距上次登录时间差: ${timeSinceLastLogin}ms`);
+    
+    // 🚀 区分不同情况：
+    // 1. 短时间内（5秒内）→ 可能是token刷新或页面重新加载
+    // 2. 较长时间（5秒以上）→ 很可能是真正的多设备登录
+    
+    if (timeSinceLastLogin < 5000) {
+      // 5秒内，可能是token刷新，更新会话标识
+      console.log(`[${requestId}] 🔄 5秒内重新登录，更新会话标识`);
       await updateUserSessionForLogin(supabase, user.id, currentSessionId);
-      return { allowed: true, reason: 'grace_period' };
+      return { allowed: true, reason: 'token_refresh' };
+    } else if (timeSinceLastLogin < 30000) {
+      // 5-30秒内，需要额外检查
+      console.log(`[${requestId}] ⚠️ 5-30秒内重新登录，可能是多设备`);
+      // 仍然允许，但记录详细信息
+      await updateUserSessionForLogin(supabase, user.id, currentSessionId);
+      return { allowed: true, reason: 'possible_multi_device' };
     }
   }
   
-  // 5. 多设备登录 → 拒绝访问
+  // 5. 真正的多设备登录 → 拒绝访问
   console.log(`[${requestId}] 🚨 检测到多设备登录！立即踢出`);
   console.log(`[${requestId}] 存储会话: ${storedSession}`);
   console.log(`[${requestId}] 当前会话: ${currentSessionId}`);
+  console.log(`[${requestId}] 用户: ${user.email}`);
   
   return { allowed: false, reason: 'multi_device' };
 }
@@ -269,8 +286,8 @@ export async function middleware(request: NextRequest) {
           }
         }
         
-        // 🔥 执行严格的多设备检测（3秒宽限期）
-        const deviceCheck = await performStrictDeviceCheck(
+        // 🔥 执行增强的多设备检测
+        const deviceCheck = await performEnhancedDeviceCheck(
           supabase, 
           user, 
           currentSessionId, 

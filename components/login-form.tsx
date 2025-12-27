@@ -12,11 +12,34 @@ import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
 
 /**
  * 生成唯一的会话标识（与中间件同步）
+ * 🚀 使用随机数确保每次登录都有唯一标识
  */
 function generateSessionId(userId: string, accessToken: string): string {
   const tokenPart = accessToken.substring(0, 12);
-  // 🚀 移除时间戳，确保同一设备登录生成的会话标识相同
-  return `sess_${userId}_${tokenPart}`;
+  const random = Math.random().toString(36).substring(2, 8); // 6位随机字符串
+  return `sess_${userId}_${tokenPart}_${random}`;
+}
+
+/**
+ * 获取设备指纹（简化版）
+ */
+function getDeviceFingerprint(): string {
+  try {
+    const ua = navigator.userAgent;
+    const platform = navigator.platform;
+    const language = navigator.language;
+    // 生成一个简单的设备标识
+    const fingerprint = `${ua.substring(0, 50)}_${platform}_${language}`;
+    // 简化为较短的hash
+    let hash = 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
+      hash = hash & hash;
+    }
+    return Math.abs(hash).toString(36).substring(0, 6);
+  } catch {
+    return 'unknown';
+  }
 }
 
 export function LoginForm({
@@ -78,7 +101,7 @@ export function LoginForm({
 
       console.log("[LoginForm] 登录成功，用户ID:", data.user.id);
 
-      // 🔥 关键：生成唯一的会话标识（与中间件同步）
+      // 🔥 关键：生成唯一的会话标识（添加随机数）
       const sessionId = generateSessionId(data.user.id, data.session.access_token);
       const now = new Date().toISOString();
 
