@@ -1,4 +1,4 @@
-// /components/login-form.tsx - 完整修复版本
+// /components/login-form.tsx - 同步中间件修复版本
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -10,6 +10,16 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react";
+
+/**
+ * 生成唯一的会话标识（与中间件同步）
+ */
+function generateSessionId(userId: string, accessToken: string): string {
+  const tokenPart = accessToken.substring(0, 16);
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).substring(2, 10);
+  return `sess_${userId}_${tokenPart}_${timestamp}_${random}`;
+}
 
 export function LoginForm({
   className,
@@ -23,7 +33,6 @@ export function LoginForm({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const searchParams = useSearchParams();
-
   const redirectTo = searchParams.get('redirect') || "/lobby";
   const emailFromUrl = searchParams.get("email");
   const fromSignup = searchParams.get("from") === "signup";
@@ -46,7 +55,6 @@ export function LoginForm({
 
     try {
       const supabase = createClient();
-
       console.log("[LoginForm] 尝试登录:", email.trim());
 
       const { data, error: authError } = await supabase.auth.signInWithPassword({
@@ -59,90 +67,81 @@ export function LoginForm({
         if (authError.message.includes('Invalid login credentials')) {
           throw new Error('邮箱或密码错误');
         } else if (authError.message.includes('Email not confirmed')) {
-          throw new Error('邮箱未验证，请检查收件箱');
+          throw new Error('邮箱未验证，请检查收件箱并确认注册');
         } else {
           throw new Error(`登录失败: ${authError.message}`);
         }
       }
 
-      console.log("[LoginForm] 登录成功，更新会话标识");
+      if (!data?.user || !data?.session) {
+        throw new Error('登录成功但未获取到用户数据');
+      }
 
-      // 🔥 关键修复：原子性更新会话标识
-      if (data?.user && data?.session) {
-        try {
-          const sessionFingerprint = `sess_${data.user.id}_${data.session.access_token.substring(0, 12)}`;
-          const now = new Date().toISOString();
+      console.log("[LoginForm] 登录成功，用户ID:", data.user.id);
 
-          console.log("[LoginForm] 设置会话标识:", sessionFingerprint);
+      // 🔥 关键：生成唯一的会话标识（与中间件同步）
+      const sessionId = generateSessionId(data.user.id, data.session.access_token);
+      const now = new Date().toISOString();
 
-          // 使用upsert确保原子性，防止并发问题
-          const { error: updateError } = await supabase
+      console.log("[LoginForm] 生成会话标识:", sessionId.substring(0, 50) + '...');
+
+      // 🔥 原子性更新用户会话
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .upsert({
+          id: data.user.id,
+          email: data.user.email,
+          last_login_session: sessionId, // 🔥 更新为唯一会话标识
+          last_login_at: now,
+          updated_at: now,
+          avatar_url: '',
+          preferences: { theme: 'default' }
+        }, {
+          onConflict: 'id',
+          ignoreDuplicates: false
+        });
+
+      if (updateError) {
+        console.error('[LoginForm] 更新用户会话失败:', updateError);
+        
+        // 🔥 重试机制（最多2次）
+        let retrySuccess = false;
+        for (let i = 0; i < 2; i++) {
+          console.log(`[LoginForm] 重试更新会话 (${i + 1}/2)`);
+          
+          const { error: retryError } = await supabase
             .from('profiles')
-            .upsert({
-              id: data.user.id,
-              email: data.user.email,
-              last_login_session: sessionFingerprint,
+            .update({
+              last_login_session: sessionId,
               last_login_at: now,
-              updated_at: now,
-              // 如果其他字段不存在，设置默认值
-              avatar_url: '',
-              preferences: { theme: 'default' }
-            }, {
-              onConflict: 'id',
-              ignoreDuplicates: false
-            });
-
-          if (updateError) {
-            console.error('[登录] 更新会话记录失败:', updateError);
-            
-            // 🔥 关键：尝试重试3次
-            let retryCount = 0;
-            let success = false;
-            
-            while (retryCount < 3 && !success) {
-              console.log(`[登录] 重试更新会话 (${retryCount + 1}/3)`);
-              const { error: retryError } = await supabase
-                .from('profiles')
-                .upsert({
-                  id: data.user.id,
-                  email: data.user.email,
-                  last_login_session: sessionFingerprint,
-                  last_login_at: now,
-                  updated_at: now
-                }, {
-                  onConflict: 'id'
-                });
-              
-              if (!retryError) {
-                success = true;
-                console.log('[登录] 重试更新成功');
-                break;
-              }
-              
-              retryCount++;
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-            
-            if (!success) {
-              console.error('[登录] 多次重试后仍失败，但继续登录流程');
-            }
-          } else {
-            console.log('[登录] 会话标识更新完成');
+              updated_at: now
+            })
+            .eq('id', data.user.id);
+          
+          if (!retryError) {
+            retrySuccess = true;
+            console.log('[LoginForm] 重试更新成功');
+            break;
           }
-        } catch (sessionErr) {
-          console.error('[登录] 处理会话时异常:', sessionErr);
-          // 继续执行，不阻断登录流程
+          
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
+        
+        if (!retrySuccess) {
+          console.warn('[LoginForm] 更新会话失败，但继续登录流程');
+        }
+      } else {
+        console.log('[LoginForm] 用户会话更新成功');
       }
 
       // 显示成功消息
       setSuccessMessage("✅ 登录成功！");
 
-      // 🔥 确保有足够时间让数据库更新传播
+      // 🔥 确保数据库更新完成后再跳转
       setTimeout(() => {
-        console.log('✅ 重定向到:', redirectTo);
+        console.log('[LoginForm] 重定向到:', redirectTo);
         window.location.href = redirectTo;
-      }, 800); // 增加到800ms，确保数据库完全同步
+      }, 500);
 
     } catch (error: unknown) {
       console.error("[LoginForm] 登录异常:", error);
