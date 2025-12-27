@@ -1,4 +1,3 @@
-// /middleware.ts - 恢复版（只保留多设备检测，移除偏好检查）
 import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -6,8 +5,8 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 function generateSessionId(userId: string, accessToken: string): string {
   const tokenPart = accessToken.substring(0, 12);
-  const timestamp = Date.now();
-  return `sess_${userId}_${tokenPart}_${timestamp}`;
+  // 🚀 移除时间戳，确保同一设备登录生成的会话标识相同
+  return `sess_${userId}_${tokenPart}`;
 }
 
 function isAdminEmail(email: string | undefined | null): boolean {
@@ -133,8 +132,8 @@ async function performStrictDeviceCheck(
   const storedSession = profile.last_login_session;
   
   console.log(`[${requestId}] 🔍 会话检查:`, {
-    current: currentSessionId.substring(0, 30) + '...',
-    stored: storedSession.substring(0, 30) + '...',
+    current: currentSessionId,
+    stored: storedSession,
     match: storedSession === currentSessionId
   });
   
@@ -151,7 +150,7 @@ async function performStrictDeviceCheck(
   const lastLoginTime = profile.last_login_at ? new Date(profile.last_login_at) : null;
   if (lastLoginTime) {
     const timeSinceLastLogin = Date.now() - lastLoginTime.getTime();
-    if (timeSinceLastLogin < 3000) { // 🔥 从30000改为3000（3秒）
+    if (timeSinceLastLogin < 3000) { // 🔥 3秒宽限期
       console.log(`[${requestId}] 3秒宽限期内，更新会话标识`);
       
       await updateUserSessionForLogin(supabase, user.id, currentSessionId);
@@ -161,8 +160,8 @@ async function performStrictDeviceCheck(
   
   // 5. 多设备登录 → 拒绝访问
   console.log(`[${requestId}] 🚨 检测到多设备登录！立即踢出`);
-  console.log(`[${requestId}] 存储会话: ${storedSession.substring(0, 50)}...`);
-  console.log(`[${requestId}] 当前会话: ${currentSessionId.substring(0, 50)}...`);
+  console.log(`[${requestId}] 存储会话: ${storedSession}`);
+  console.log(`[${requestId}] 当前会话: ${currentSessionId}`);
   
   return { allowed: false, reason: 'multi_device' };
 }

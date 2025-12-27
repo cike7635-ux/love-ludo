@@ -1,4 +1,4 @@
-// /app/api/auth/signup-with-key/route.ts - 恢复原来的偏好设置
+// /app/api/auth/signup-with-key/route.ts - 修复偏好设置问题
 import { NextRequest, NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { cookies } from 'next/headers';
@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
       sessionId: initialSessionId
     });
     
-    // 🔥 创建用户资料（保持原来的偏好设置）
+    // 🔥 创建用户资料
     const { error: profileError } = await supabase.from('profiles').upsert({
       id: authData.user.id,
       email: email.trim(),
@@ -101,8 +101,8 @@ export async function POST(request: NextRequest) {
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       avatar_url: '',
-      // 🔥 保持原来的偏好设置，不添加额外标记
-      preferences: { theme: 'default' },
+      // 🚀 关键修复：设置为空对象，而不是默认theme
+      preferences: {},
     });
     
     if (profileError) {

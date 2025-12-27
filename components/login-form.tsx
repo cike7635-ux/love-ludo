@@ -1,4 +1,3 @@
-// /components/login-form.tsx - 恢复版（只做登录，不检查偏好）
 "use client";
 
 import { cn } from "@/lib/utils";
@@ -16,8 +15,8 @@ import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
  */
 function generateSessionId(userId: string, accessToken: string): string {
   const tokenPart = accessToken.substring(0, 12);
-  const timestamp = Date.now();
-  return `sess_${userId}_${tokenPart}_${timestamp}`;
+  // 🚀 移除时间戳，确保同一设备登录生成的会话标识相同
+  return `sess_${userId}_${tokenPart}`;
 }
 
 export function LoginForm({
@@ -83,7 +82,7 @@ export function LoginForm({
       const sessionId = generateSessionId(data.user.id, data.session.access_token);
       const now = new Date().toISOString();
 
-      console.log("[LoginForm] 生成会话标识:", sessionId.substring(0, 50) + '...');
+      console.log("[LoginForm] 生成会话标识:", sessionId);
 
       // 🔥 原子性更新用户会话（使用upsert确保一致性）
       const { error: updateError } = await supabase
@@ -95,7 +94,7 @@ export function LoginForm({
           last_login_at: now,
           updated_at: now,
           avatar_url: '',
-          preferences: { theme: 'default' }
+          // 🚀 关键修复：移除preferences字段，避免覆盖用户已有偏好
         }, {
           onConflict: 'id',
           ignoreDuplicates: false
@@ -137,7 +136,7 @@ export function LoginForm({
       // 显示成功消息
       setSuccessMessage("✅ 登录成功！");
 
-      // 🔥 确保数据库更新完成后再跳转（不检查偏好设置）
+      // 🔥 确保数据库更新完成后再跳转
       setTimeout(() => {
         console.log('[LoginForm] 重定向到:', redirectTo);
         window.location.href = redirectTo;
