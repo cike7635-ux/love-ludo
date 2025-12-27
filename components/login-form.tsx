@@ -29,11 +29,24 @@ function getOrCreateDeviceId(): string {
 }
 
 /**
+ * 设置设备ID到cookie（让中间件可以读取）
+ */
+function setDeviceIdToCookie(deviceId: string) {
+  if (typeof window === 'undefined') return;
+  
+  // 设置cookie，路径为根路径，有效期为1年
+  const cookieValue = `${encodeURIComponent(deviceId)}`;
+  document.cookie = `love_ludo_device_id=${cookieValue}; path=/; max-age=31536000; SameSite=Lax`;
+}
+
+/**
  * 生成会话标识（包含设备ID）
  */
 function generateSessionId(userId: string, accessToken: string): string {
   const tokenPart = accessToken.substring(0, 12);
   const deviceId = getOrCreateDeviceId();
+  // 🔥 设置设备ID到cookie，让中间件可以读取
+  setDeviceIdToCookie(deviceId);
   return `sess_${userId}_${deviceId}_${tokenPart}`;
 }
 

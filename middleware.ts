@@ -4,22 +4,21 @@ import { NextResponse, type NextRequest } from 'next/server';
 // ==================== 工具函数 ====================
 
 /**
- * 从请求头中提取设备ID（简化版，实际应该从自定义header或cookie中获取）
+ * 从cookie中提取设备ID
  */
 function extractDeviceId(request: NextRequest): string {
   // 尝试从cookie获取
   const deviceIdCookie = request.cookies.get('love_ludo_device_id');
-  if (deviceIdCookie) {
-    return deviceIdCookie.value;
+  if (deviceIdCookie && deviceIdCookie.value) {
+    try {
+      // 解码URL编码的设备ID
+      return decodeURIComponent(deviceIdCookie.value);
+    } catch {
+      return deviceIdCookie.value;
+    }
   }
   
-  // 尝试从header获取（前端需要设置）
-  const deviceIdHeader = request.headers.get('X-Device-ID');
-  if (deviceIdHeader) {
-    return deviceIdHeader;
-  }
-  
-  // 如果没有，返回默认值（这会导致多设备检测失败）
+  // 如果没有，返回'unknown'
   return 'unknown';
 }
 
@@ -174,7 +173,13 @@ async function performDeviceBasedCheck(
     // 格式：sess_{userId}_{deviceId}_{tokenPart}
     const parts = session.split('_');
     if (parts.length >= 4) {
-      return parts[2]; // deviceId是第三个部分
+      // 设备ID可能是多部分的（如dev_时间戳_随机数），所以需要合并
+      // sess_userId_dev_timestamp_random_tokenPart
+      if (parts[2] === 'dev' && parts.length > 4) {
+        // 合并从索引2到倒数第二部分作为设备ID
+        return parts.slice(2, parts.length - 1).join('_');
+      }
+      return parts[2]; // 设备ID是第三个部分
     }
     return 'unknown';
   };
@@ -219,6 +224,9 @@ export async function middleware(request: NextRequest) {
   
   if (!currentPath.startsWith('/_next') && !currentPath.startsWith('/favicon')) {
     console.log(`[${requestId}] 中间件: ${currentPath}`);
+    // 记录设备ID（用于调试）
+    const deviceId = extractDeviceId(request);
+    console.log(`[${requestId}] 提取的设备ID: ${deviceId}`);
   }
   
   try {
