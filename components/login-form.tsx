@@ -11,35 +11,30 @@ import { useState, useEffect } from "react";
 import { Mail, Lock, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react";
 
 /**
- * 生成唯一的会话标识（与中间件同步）
- * 🚀 使用随机数确保每次登录都有唯一标识
+ * 获取或创建设备ID（存储在localStorage中）
  */
-function generateSessionId(userId: string, accessToken: string): string {
-  const tokenPart = accessToken.substring(0, 12);
-  const random = Math.random().toString(36).substring(2, 8); // 6位随机字符串
-  return `sess_${userId}_${tokenPart}_${random}`;
+function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return 'server';
+  
+  const key = 'love_ludo_device_id';
+  let deviceId = localStorage.getItem(key);
+  
+  if (!deviceId) {
+    // 生成新的设备ID：时间戳 + 随机数
+    deviceId = `dev_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    localStorage.setItem(key, deviceId);
+  }
+  
+  return deviceId;
 }
 
 /**
- * 获取设备指纹（简化版）
+ * 生成会话标识（包含设备ID）
  */
-function getDeviceFingerprint(): string {
-  try {
-    const ua = navigator.userAgent;
-    const platform = navigator.platform;
-    const language = navigator.language;
-    // 生成一个简单的设备标识
-    const fingerprint = `${ua.substring(0, 50)}_${platform}_${language}`;
-    // 简化为较短的hash
-    let hash = 0;
-    for (let i = 0; i < fingerprint.length; i++) {
-      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
-      hash = hash & hash;
-    }
-    return Math.abs(hash).toString(36).substring(0, 6);
-  } catch {
-    return 'unknown';
-  }
+function generateSessionId(userId: string, accessToken: string): string {
+  const tokenPart = accessToken.substring(0, 12);
+  const deviceId = getOrCreateDeviceId();
+  return `sess_${userId}_${deviceId}_${tokenPart}`;
 }
 
 export function LoginForm({
@@ -78,6 +73,7 @@ export function LoginForm({
       const supabase = createClient();
 
       console.log("[LoginForm] 尝试登录:", email.trim());
+      console.log("[LoginForm] 设备ID:", getOrCreateDeviceId());
 
       const { data, error: authError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -101,23 +97,22 @@ export function LoginForm({
 
       console.log("[LoginForm] 登录成功，用户ID:", data.user.id);
 
-      // 🔥 关键：生成唯一的会话标识（添加随机数）
+      // 生成会话标识（包含设备ID）
       const sessionId = generateSessionId(data.user.id, data.session.access_token);
       const now = new Date().toISOString();
 
       console.log("[LoginForm] 生成会话标识:", sessionId);
 
-      // 🔥 原子性更新用户会话（使用upsert确保一致性）
+      // 更新用户会话
       const { error: updateError } = await supabase
         .from('profiles')
         .upsert({
           id: data.user.id,
           email: data.user.email,
-          last_login_session: sessionId, // 🔥 更新为唯一会话标识
+          last_login_session: sessionId,
           last_login_at: now,
           updated_at: now,
           avatar_url: '',
-          // 🚀 关键修复：移除preferences字段，避免覆盖用户已有偏好
         }, {
           onConflict: 'id',
           ignoreDuplicates: false
@@ -126,7 +121,7 @@ export function LoginForm({
       if (updateError) {
         console.error('[LoginForm] 更新用户会话失败:', updateError);
         
-        // 🔥 重试机制（最多2次）
+        // 重试机制
         let retrySuccess = false;
         for (let i = 0; i < 2; i++) {
           console.log(`[LoginForm] 重试更新会话 (${i + 1}/2)`);
@@ -159,7 +154,7 @@ export function LoginForm({
       // 显示成功消息
       setSuccessMessage("✅ 登录成功！");
 
-      // 🔥 确保数据库更新完成后再跳转
+      // 跳转
       setTimeout(() => {
         console.log('[LoginForm] 重定向到:', redirectTo);
         window.location.href = redirectTo;
